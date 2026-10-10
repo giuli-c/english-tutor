@@ -9,9 +9,9 @@ const MAX_ATTEMPTS = 3000;
 
 export const DEFAULT_SETTINGS = {
   geminiKey: '',
-  geminiModel: 'gemini-2.5-flash',
+  geminiModel: 'gemini-flash-latest',
   groqKey: '',
-  groqModel: 'llama-3.3-70b-versatile',
+  groqModel: 'openai/gpt-oss-120b',
   level: 'B1',
   sessionSize: 10,
   gistToken: '',

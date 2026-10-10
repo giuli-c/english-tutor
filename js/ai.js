@@ -3,6 +3,15 @@
 
 export const hasProvider = (s) => Boolean(s.geminiKey || s.groqKey);
 
+class ModelNotFound extends Error {}
+
+async function fail(provider, res) {
+  const text = await res.text();
+  const msg = `${provider} ${res.status}${res.status === 429 ? ' (quota gratuita esaurita per ora)' : ''}: ${text.slice(0, 200)}`;
+  if (res.status === 404 || text.includes('model_not_found') || text.includes('decommissioned')) throw new ModelNotFound(msg);
+  throw new Error(msg);
+}
+
 async function callGemini(s, system, user, temperature) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(s.geminiModel)}:generateContent`;
   const res = await fetch(url, {
@@ -14,7 +23,7 @@ async function callGemini(s, system, user, temperature) {
       generationConfig: { responseMimeType: 'application/json', temperature },
     }),
   });
-  if (!res.ok) throw new Error(`Gemini ${res.status}${res.status === 429 ? ' (quota gratuita esaurita per ora)' : ''}: ${(await res.text()).slice(0, 200)}`);
+  if (!res.ok) await fail('Gemini', res);
   const json = await res.json();
   return (json.candidates?.[0]?.content?.parts || []).map((p) => p.text || '').join('');
 }
@@ -30,10 +39,45 @@ async function callGroq(s, system, user, temperature) {
       temperature,
     }),
   });
-  if (!res.ok) throw new Error(`Groq ${res.status}${res.status === 429 ? ' (quota gratuita esaurita per ora)' : ''}: ${(await res.text()).slice(0, 200)}`);
+  if (!res.ok) await fail('Groq', res);
   const json = await res.json();
   return json.choices?.[0]?.message?.content || '';
 }
+
+// I provider ritirano spesso i modelli: se quello impostato non esiste più,
+// chiediamo l'elenco dei modelli disponibili e ne scegliamo uno adatto.
+const SKIP = /lite|image|tts|audio|live|embed|vision|guard|whisper|thinking|exp|preview|nano|robotics|computer/i;
+
+async function pickGeminiModel(s) {
+  const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models?pageSize=200', { headers: { 'x-goog-api-key': s.geminiKey } });
+  if (!res.ok) await fail('Gemini', res);
+  const models = (await res.json()).models
+    .filter((m) => (m.supportedGenerationMethods || []).includes('generateContent'))
+    .map((m) => m.name.replace('models/', ''));
+  const version = (n) => parseFloat((n.match(/gemini-(\d+(?:\.\d+)?)/) || [])[1] || 0);
+  const flash = models.filter((n) => /^gemini-[\d.]+-flash$/.test(n)).sort((a, b) => version(b) - version(a));
+  return flash[0] || models.find((n) => n.includes('flash') && !SKIP.test(n)) || models.find((n) => n.includes('flash'));
+}
+
+async function pickGroqModel(s) {
+  const res = await fetch('https://api.groq.com/openai/v1/models', { headers: { Authorization: `Bearer ${s.groqKey}` } });
+  if (!res.ok) await fail('Groq', res);
+  const ids = (await res.json()).data.filter((m) => m.active !== false).map((m) => m.id).filter((id) => !SKIP.test(id));
+  const preferred = ['gpt-oss-120b', 'llama-3.3-70b', 'llama-4', 'qwen', 'gpt-oss', 'llama'];
+  for (const p of preferred) {
+    const hit = ids.find((id) => id.includes(p));
+    if (hit) return hit;
+  }
+  return ids[0];
+}
+
+const PROVIDERS = [
+  { name: 'Gemini', key: 'geminiKey', model: 'geminiModel', call: callGemini, pick: pickGeminiModel },
+  { name: 'Groq', key: 'groqKey', model: 'groqModel', call: callGroq, pick: pickGroqModel },
+];
+
+let onModelChange = () => {};
+export const setOnModelChange = (fn) => { onModelChange = fn; };
 
 function parseJSON(text) {
   const clean = text.trim().replace(/^```(?:json)?\s*/i, '').replace(/```$/, '');
@@ -41,14 +85,21 @@ function parseJSON(text) {
 }
 
 export async function askJSON(s, system, user, temperature = 0.4) {
-  const providers = [];
-  if (s.geminiKey) providers.push(callGemini);
-  if (s.groqKey) providers.push(callGroq);
+  const providers = PROVIDERS.filter((p) => s[p.key]);
   if (!providers.length) throw new Error('Nessuna chiave API configurata (vai in Impostazioni).');
   const errors = [];
-  for (const call of providers) {
+  for (const p of providers) {
     try {
-      return parseJSON(await call(s, system, user, temperature));
+      try {
+        return parseJSON(await p.call(s, system, user, temperature));
+      } catch (e) {
+        if (!(e instanceof ModelNotFound)) throw e;
+        const model = await p.pick(s);
+        if (!model || model === s[p.model]) throw e;
+        s[p.model] = model;
+        onModelChange(p.name, model);
+        return parseJSON(await p.call(s, system, user, temperature));
+      }
     } catch (e) {
       errors.push(e.message);
     }

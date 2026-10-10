@@ -75,6 +75,6 @@ e apri http://localhost:8000 (serve un server: aprendo `index.html` con doppio c
 
 ## Se qualcosa smette di funzionare
 
-- **"Gemini 404"**: il modello è stato ritirato → in Impostazioni scrivi un modello attuale (lista su AI Studio).
+- **"Gemini 404"**: il modello è stato ritirato → in Impostazioni scrivi un modello attuale (lista su AI Studio). Di solito non serve: se il modello non esiste più, l'app ne sceglie da sola uno disponibile.
 - **"429 quota esaurita"**: aspetta o aggiungi la chiave Groq come riserva.
 - **Dopo un aggiornamento del codice** l'app scarica la nuova versione alla prima apertura online; se vedi ancora la vecchia, chiudila e riaprila.

@@ -465,11 +465,11 @@ function renderSettings() {
         <label>Chiave Gemini <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">(ottienila gratis)</a>
           <input name="geminiKey" type="password" autocomplete="off" value="${esc(s.geminiKey)}"></label>
         <label>Modello Gemini<input name="geminiModel" list="gemini-models" value="${esc(s.geminiModel)}"></label>
-        <datalist id="gemini-models"><option value="gemini-2.5-flash"><option value="gemini-2.5-flash-lite"></datalist>
+        <datalist id="gemini-models"><option value="gemini-flash-latest"></datalist>
         <label>Chiave Groq <a href="https://console.groq.com/keys" target="_blank" rel="noopener">(ottienila gratis)</a>
           <input name="groqKey" type="password" autocomplete="off" value="${esc(s.groqKey)}"></label>
         <label>Modello Groq<input name="groqModel" list="groq-models" value="${esc(s.groqModel)}"></label>
-        <datalist id="groq-models"><option value="llama-3.3-70b-versatile"><option value="openai/gpt-oss-120b"><option value="openai/gpt-oss-20b"></datalist>
+        <datalist id="groq-models"><option value="openai/gpt-oss-120b"></datalist>
         <button type="button" class="btn ghost full" data-action="test-ai">Prova connessione</button>
       </div>
       <div class="card">
@@ -499,9 +499,9 @@ function renderSettings() {
     const tokenChanged = f.gistToken.trim() !== s.gistToken;
     Object.assign(S.settings, {
       geminiKey: f.geminiKey.trim(),
-      geminiModel: f.geminiModel.trim() || 'gemini-2.5-flash',
+      geminiModel: f.geminiModel.trim() || 'gemini-flash-latest',
       groqKey: f.groqKey.trim(),
-      groqModel: f.groqModel.trim() || 'llama-3.3-70b-versatile',
+      groqModel: f.groqModel.trim() || 'openai/gpt-oss-120b',
       level: f.level,
       sessionSize: Math.min(25, Math.max(3, parseInt(f.sessionSize, 10) || 10)),
       gistToken: f.gistToken.trim(),
@@ -703,6 +703,11 @@ window.addEventListener('online', syncNow);
   if (S.session?.phase === 'loading') S.session = null;
   if (S.session?.phase === 'checking') S.session.phase = 'answer';
   setOnDataChange(scheduleSync);
+  ai.setOnModelChange(async (provider, model) => {
+    await saveSettings();
+    toast(`${provider}: il modello precedente non è più disponibile, ora uso ${model}`);
+    if (ui.current === 'settings') renderSettings();
+  });
   setSyncState(S.settings.gistToken ? 'ok' : 'off');
   render();
   syncNow();
