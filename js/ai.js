@@ -1,4 +1,4 @@
-// Livello AI: Gemini come provider principale, Groq come riserva.
+// Livello AI: Gemini come provider principale, Groq come riserva (e primo per le correzioni, perché più veloce).
 // Ogni chiamata chiede una risposta JSON strutturata, che viene poi validata dal codice.
 
 export const hasProvider = (s) => Boolean(s.geminiKey || s.groqKey);
@@ -12,17 +12,31 @@ async function fail(provider, res) {
   throw new Error(msg);
 }
 
+// I modelli Gemini recenti "ragionano" prima di rispondere e questo li rende lenti.
+// Per i nostri compiti basta un ragionamento minimo; se il modello non accetta
+// il parametro, si riprova senza e lo si ricorda.
+const GEMINI_THINKING = [{ thinkingLevel: 'minimal' }, { thinkingLevel: 'low' }, { thinkingBudget: 0 }, null];
+let geminiThinking = 0;
+
 async function callGemini(s, system, user, temperature) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(s.geminiModel)}:generateContent`;
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'x-goog-api-key': s.geminiKey },
-    body: JSON.stringify({
-      systemInstruction: { parts: [{ text: system }] },
-      contents: [{ role: 'user', parts: [{ text: user }] }],
-      generationConfig: { responseMimeType: 'application/json', temperature },
-    }),
-  });
+  let res;
+  for (;;) {
+    const thinkingConfig = GEMINI_THINKING[geminiThinking];
+    res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': s.geminiKey },
+      body: JSON.stringify({
+        systemInstruction: { parts: [{ text: system }] },
+        contents: [{ role: 'user', parts: [{ text: user }] }],
+        generationConfig: { responseMimeType: 'application/json', temperature, ...(thinkingConfig && { thinkingConfig }) },
+      }),
+    });
+    if (res.status !== 400 || !thinkingConfig) break;
+    const text = await res.clone().text();
+    if (!/think/i.test(text)) break;
+    geminiThinking++;
+  }
   if (!res.ok) await fail('Gemini', res);
   const json = await res.json();
   return (json.candidates?.[0]?.content?.parts || []).map((p) => p.text || '').join('');
@@ -37,6 +51,7 @@ async function callGroq(s, system, user, temperature) {
       messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
       response_format: { type: 'json_object' },
       temperature,
+      ...(s.groqModel.includes('gpt-oss') && { reasoning_effort: 'low' }),
     }),
   });
   if (!res.ok) await fail('Groq', res);
@@ -84,8 +99,10 @@ function parseJSON(text) {
   return JSON.parse(clean);
 }
 
-export async function askJSON(s, system, user, temperature = 0.4) {
+// fast: per le correzioni, dove conta la velocità, Groq (molto più rapido) va per primo.
+export async function askJSON(s, system, user, temperature = 0.4, { fast = false } = {}) {
   const providers = PROVIDERS.filter((p) => s[p.key]);
+  if (fast) providers.reverse();
   if (!providers.length) throw new Error('Nessuna chiave API configurata (vai in Impostazioni).');
   const errors = [];
   for (const p of providers) {
@@ -161,7 +178,7 @@ Valuta la traduzione dello studente.
 
 Formato:
 {"verdict":"correct|minor|wrong","corrected":"...","natural":"...","explanation":"...","errors":[{"type":"grammar|vocabulary|spelling|word_order|missing|other","itemId":"... o null","what":"..."}]}`;
-  const out = await askJSON(s, TUTOR, user, 0.2);
+  const out = await askJSON(s, TUTOR, user, 0.2, { fast: true });
   const verdict = ['correct', 'minor', 'wrong'].includes(out.verdict) ? out.verdict : 'wrong';
   const valid = new Set(items.map((i) => i.id));
   return {
