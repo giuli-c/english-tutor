@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>English Tutor</title>
+  <meta name="description" content="Tutor di inglese personale: vocabolario, grammatica e traduzioni corrette dall'AI.">
+  <meta name="theme-color" content="#4f46e5">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="English Tutor">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <h1>English Tutor</h1>
+    <span id="sync-dot" class="sync-dot" title="Sincronizzazione non configurata"></span>
+  </header>
+
+  <main id="view" class="view"></main>
+
+  <nav class="tabbar">
+    <button data-view="practice" class="active"><span class="ico">✍️</span>Pratica</button>
+    <button data-view="library"><span class="ico">📚</span>Archivio</button>
+    <button data-view="progress"><span class="ico">📈</span>Progressi</button>
+    <button data-view="settings"><span class="ico">⚙️</span>Impostazioni</button>
+  </nav>
+
+  <div id="modal" class="modal hidden" role="dialog" aria-modal="true"><div class="modal-card" id="modal-card"></div></div>
+  <div id="toast" class="toast hidden"></div>
+  <input type="file" id="file-input" accept=".txt,.md,.csv,.tsv,.pdf,.docx" hidden>
+  <input type="file" id="backup-input" accept=".json" hidden>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
