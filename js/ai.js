@@ -5,6 +5,17 @@ export const hasProvider = (s) => Boolean(s.geminiKey || s.groqKey);
 
 class ModelNotFound extends Error {}
 
+// Se un servizio è sovraccarico può tenere la richiesta aperta senza rispondere:
+// dopo 40 secondi la si interrompe e si passa al provider successivo.
+async function timedFetch(url, options = {}) {
+  try {
+    return await fetch(url, { ...options, signal: AbortSignal.timeout(40000) });
+  } catch (e) {
+    if (e.name === 'TimeoutError' || e.name === 'AbortError') throw new Error(`${new URL(url).hostname.includes('groq') ? 'Groq' : 'Gemini'}: nessuna risposta entro 40 secondi (servizio sovraccarico, riprova più tardi)`);
+    throw e;
+  }
+}
+
 async function fail(provider, res) {
   const text = await res.text();
   const msg = `${provider} ${res.status}${res.status === 429 ? ' (quota gratuita esaurita per ora)' : ''}: ${text.slice(0, 200)}`;
@@ -24,7 +35,7 @@ async function callGemini(s, system, user, temperature) {
   let busyRetries = 0;
   for (;;) {
     const thinkingConfig = GEMINI_THINKING[geminiThinking];
-    res = await fetch(url, {
+    res = await timedFetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-goog-api-key': s.geminiKey },
       body: JSON.stringify({
@@ -50,7 +61,7 @@ async function callGemini(s, system, user, temperature) {
 }
 
 async function callGroq(s, system, user, temperature) {
-  const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+  const res = await timedFetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${s.groqKey}` },
     body: JSON.stringify({
@@ -71,7 +82,7 @@ async function callGroq(s, system, user, temperature) {
 const SKIP = /lite|image|tts|audio|live|embed|vision|guard|whisper|thinking|exp|preview|nano|robotics|computer/i;
 
 async function pickGeminiModel(s) {
-  const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models?pageSize=200', { headers: { 'x-goog-api-key': s.geminiKey } });
+  const res = await timedFetch('https://generativelanguage.googleapis.com/v1beta/models?pageSize=200', { headers: { 'x-goog-api-key': s.geminiKey } });
   if (!res.ok) await fail('Gemini', res);
   const models = (await res.json()).models
     .filter((m) => (m.supportedGenerationMethods || []).includes('generateContent'))
@@ -82,7 +93,7 @@ async function pickGeminiModel(s) {
 }
 
 async function pickGroqModel(s) {
-  const res = await fetch('https://api.groq.com/openai/v1/models', { headers: { Authorization: `Bearer ${s.groqKey}` } });
+  const res = await timedFetch('https://api.groq.com/openai/v1/models', { headers: { Authorization: `Bearer ${s.groqKey}` } });
   if (!res.ok) await fail('Groq', res);
   const ids = (await res.json()).data.filter((m) => m.active !== false).map((m) => m.id).filter((id) => !SKIP.test(id));
   const preferred = ['gpt-oss-120b', 'llama-3.3-70b', 'llama-4', 'qwen', 'gpt-oss', 'llama'];
