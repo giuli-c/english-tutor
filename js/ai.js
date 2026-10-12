@@ -194,6 +194,24 @@ Formato:
   };
 }
 
+// Controlla le categorie degli elementi già salvati e restituisce solo quelli da spostare.
+export async function classifyItems(s, items) {
+  const user = `Ecco un archivio di studio di inglese. Ogni elemento ha una categoria ("kind"):
+- "word": parole, espressioni, modi di dire;
+- "phrasal": phrasal verbs (verbo + particella/preposizione, es. "give up", "rely on", "look forward to");
+- "rule": regole grammaticali (es. "Present perfect", "Third conditional").
+
+Indica SOLO gli elementi la cui categoria è sbagliata, con la categoria corretta. Se è tutto corretto restituisci una lista vuota.
+
+${JSON.stringify(items.map((i) => ({ id: i.id, kind: i.kind, term: i.term, meaning: i.meaning })))}
+
+Formato:
+{"changes":[{"id":"...","kind":"word|phrasal|rule"}]}`;
+  const out = await askJSON(s, TUTOR, user, 0);
+  const byId = new Map(items.map((i) => [i.id, i]));
+  return (out.changes || []).filter((c) => byId.has(c.id) && ['word', 'phrasal', 'rule'].includes(c.kind) && byId.get(c.id).kind !== c.kind);
+}
+
 export async function extractItems(s, text) {
   const user = `Dal testo seguente estrai il materiale di studio di inglese.
 - "phrasal": phrasal verbs (verbo + particella, es. "give up", "look forward to"). term = in inglese, meaning = traduzione italiana.

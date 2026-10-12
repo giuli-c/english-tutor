@@ -358,6 +358,7 @@ function renderLibrary() {
       <button class="btn primary grow" data-action="add-item">+ Aggiungi</button>
       <button class="btn ghost grow" data-action="import-file">📄 Carica file</button>
       <button class="btn ghost grow" data-action="paste-list">📋 Incolla lista</button>
+      ${S.data.items.length ? '<button class="btn ghost grow" data-action="reclassify">🪄 Riordina categorie</button>' : ''}
     </div>
     <input id="lib-search" type="search" placeholder="Cerca…" value="${esc(ui.libQuery)}">
     ${list.length ? '' : `<p class="muted center">Nessun elemento${q ? ' trovato' : ''}.</p>`}
@@ -464,6 +465,54 @@ function showPreview(items) {
       <button class="btn ghost grow" data-action="close-modal">Annulla</button>
       <button class="btn primary grow" data-action="save-preview">Salva selezionati</button>
     </div>`);
+}
+
+async function reclassify() {
+  if (!ai.hasProvider(S.settings)) return toast('Configura prima una chiave API nelle Impostazioni', true);
+  openModal(loading("L'AI sta controllando le categorie…"));
+  let changes;
+  try {
+    changes = await ai.classifyItems(S.settings, S.data.items);
+  } catch (e) {
+    closeModal();
+    return toast(e.message, true);
+  }
+  if (!changes.length) {
+    closeModal();
+    return toast('Tutti gli elementi sono già nella categoria giusta ✓');
+  }
+  ui.preview = changes;
+  openModal(`
+    <h3>${changes.length} elementi da spostare</h3>
+    <p class="muted small">Deseleziona quelli che vuoi lasciare dove sono.</p>
+    <div class="list preview">
+      ${changes.map((c, n) => {
+        const item = findItem(c.id);
+        return `
+        <label class="check">
+          <input type="checkbox" data-n="${n}" checked>
+          <span><b>${esc(item.term)}</b><br>
+          <span class="muted small">${KINDS[item.kind].many} → <b>${KINDS[c.kind].many}</b></span></span>
+        </label>`;
+      }).join('')}
+    </div>
+    <div class="row gap">
+      <button class="btn ghost grow" data-action="close-modal">Annulla</button>
+      <button class="btn primary grow" data-action="save-reclassify">Sposta selezionati</button>
+    </div>`);
+}
+
+async function saveReclassify() {
+  const checked = [...document.querySelectorAll('.preview input:checked')].map((c) => ui.preview[+c.dataset.n]);
+  const now = Date.now();
+  for (const c of checked) {
+    const item = findItem(c.id);
+    if (item) Object.assign(item, { kind: c.kind, updatedAt: now });
+  }
+  await saveData();
+  closeModal();
+  toast(`${checked.length} elementi spostati`);
+  render();
 }
 
 async function savePreview() {
@@ -749,6 +798,8 @@ const actions = {
   'paste-parse': () => analyzeText($('#paste-text').value, false),
   'paste-ai': () => analyzeText($('#paste-text').value, true),
   'save-preview': savePreview,
+  reclassify,
+  'save-reclassify': saveReclassify,
   'close-modal': closeModal,
   'test-ai': async () => {
     toast('Provo la connessione…');
