@@ -1,7 +1,7 @@
 import { S, KINDS, load, saveData, saveSettings, saveSession, replaceData, addItem, deleteItem, findItem, isDuplicate, merge, setOnDataChange } from './store.js';
 import { pickForSession, pickCards, review, mastery, isDue } from './srs.js';
 import * as ai from './ai.js';
-import { readFileText, parseQuickList } from './importer.js';
+import { readFileText, parseQuickList, splitMeaning } from './importer.js';
 import * as sync from './sync.js';
 
 const $ = (sel, el = document) => el.querySelector(sel);
@@ -358,7 +358,7 @@ function renderLibrary() {
       <button class="btn primary grow" data-action="add-item">+ Aggiungi</button>
       <button class="btn ghost grow" data-action="import-file">📄 Carica file</button>
       <button class="btn ghost grow" data-action="paste-list">📋 Incolla lista</button>
-      ${S.data.items.length ? '<button class="btn ghost grow" data-action="reclassify">🪄 Riordina categorie</button>' : ''}
+      ${S.data.items.length ? '<button class="btn ghost grow" data-action="reclassify">🪄 Sistema archivio</button>' : ''}
     </div>
     <input id="lib-search" type="search" placeholder="Cerca…" value="${esc(ui.libQuery)}">
     ${list.length ? '' : `<p class="muted center">Nessun elemento${q ? ' trovato' : ''}.</p>`}
@@ -467,53 +467,67 @@ function showPreview(items) {
     </div>`);
 }
 
+// Sistema l'archivio: sposta gli esempi inglesi fuori dal significato (codice)
+// e corregge le categorie (AI). Tutte le modifiche passano da un'anteprima.
 async function reclassify() {
-  if (!ai.hasProvider(S.settings)) return toast('Configura prima una chiave API nelle Impostazioni', true);
-  openModal(loading("L'AI sta controllando le categorie…"));
-  let changes;
-  try {
-    changes = await ai.classifyItems(S.settings, S.data.items, (n, tot) => {
-      if (tot > 1) openModal(loading(`L'AI sta controllando le categorie… (blocco ${n} di ${tot})`));
-    });
-  } catch (e) {
-    closeModal();
-    return toast(e.message, true);
+  const changes = new Map();
+  for (const item of S.data.items) {
+    if (item.kind === 'rule') continue;
+    const { meaning, example } = splitMeaning(item.term, item.meaning);
+    if (example) changes.set(item.id, { id: item.id, meaning, example: item.example ? `${item.example} / ${example}` : example });
   }
-  if (!changes.length) {
-    closeModal();
-    return toast('Tutti gli elementi sono già nella categoria giusta ✓');
+  let aiError = '';
+  if (ai.hasProvider(S.settings)) {
+    openModal(loading("L'AI sta controllando le categorie…"));
+    try {
+      const kinds = await ai.classifyItems(S.settings, S.data.items, (n, tot) => {
+        if (tot > 1) openModal(loading(`L'AI sta controllando le categorie… (blocco ${n} di ${tot})`));
+      });
+      for (const c of kinds) changes.set(c.id, { ...(changes.get(c.id) || { id: c.id }), kind: c.kind });
+    } catch (e) {
+      aiError = e.message;
+    }
+  } else {
+    aiError = 'nessuna chiave API';
   }
-  ui.preview = changes;
+  const list = [...changes.values()];
+  if (!list.length) {
+    closeModal();
+    return aiError ? toast(`Controllo categorie non riuscito: ${aiError}`, true) : toast("L'archivio è già in ordine ✓");
+  }
+  ui.preview = list;
   openModal(`
-    <h3>${changes.length} elementi da spostare</h3>
-    <p class="muted small">Deseleziona quelli che vuoi lasciare dove sono.</p>
+    <h3>${list.length} elementi da sistemare</h3>
+    ${aiError ? `<p class="small bad-text">Categorie non controllate (${esc(aiError)}). Puoi comunque separare gli esempi.</p>` : ''}
+    <p class="muted small">Deseleziona quelli che vuoi lasciare come sono.</p>
     <div class="list preview">
-      ${changes.map((c, n) => {
+      ${list.map((c, n) => {
         const item = findItem(c.id);
         return `
         <label class="check">
           <input type="checkbox" data-n="${n}" checked>
           <span><b>${esc(item.term)}</b><br>
-          <span class="muted small">${KINDS[item.kind].many} → <b>${KINDS[c.kind].many}</b></span></span>
+          ${c.kind ? `<span class="muted small">${KINDS[item.kind].many} → <b>${KINDS[c.kind].many}</b></span><br>` : ''}
+          ${c.example ? `<span class="muted small">Significato: <b>${esc(c.meaning)}</b><br>Esempio: <i>${esc(c.example)}</i></span>` : ''}</span>
         </label>`;
       }).join('')}
     </div>
     <div class="row gap">
       <button class="btn ghost grow" data-action="close-modal">Annulla</button>
-      <button class="btn primary grow" data-action="save-reclassify">Sposta selezionati</button>
+      <button class="btn primary grow" data-action="save-reclassify">Applica selezionati</button>
     </div>`);
 }
 
 async function saveReclassify() {
   const checked = [...document.querySelectorAll('.preview input:checked')].map((c) => ui.preview[+c.dataset.n]);
   const now = Date.now();
-  for (const c of checked) {
-    const item = findItem(c.id);
-    if (item) Object.assign(item, { kind: c.kind, updatedAt: now });
+  for (const { id, ...fields } of checked) {
+    const item = findItem(id);
+    if (item) Object.assign(item, fields, { updatedAt: now });
   }
   await saveData();
   closeModal();
-  toast(`${checked.length} elementi spostati`);
+  toast(`${checked.length} elementi sistemati`);
   render();
 }
 

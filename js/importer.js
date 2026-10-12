@@ -42,6 +42,22 @@ export async function readFileText(file) {
   return file.text();
 }
 
+// Separa dal significato le frasi di esempio in inglese, es.
+// "alzare il volume - Turn up the volume." -> meaning "alzare il volume", example "Turn up the volume."
+// Un segmento (dopo il primo) è un esempio se contiene una parola del termine
+// o parole tipicamente inglesi che non esistono in italiano.
+const ENGLISH = /\b(I|you|he|she|we|they|the|is|are|was|were|my|your|his|her|their|don't|can't|I'm|it's|It's|He's|She's|You're)\b/;
+export function splitMeaning(term, meaning) {
+  const segments = meaning.split(/\s+[-–—]\s+/);
+  if (segments.length < 2) return { meaning, example: '' };
+  const tokens = term.toLowerCase().split(/\s+/).filter((t) => t.length >= 3 && !['someone', 'something', 'the'].includes(t));
+  const isExample = (seg) => tokens.some((t) => seg.toLowerCase().includes(t)) || ENGLISH.test(seg);
+  const keep = [segments[0]];
+  const examples = [];
+  for (const seg of segments.slice(1)) (isExample(seg) ? examples : keep).push(seg);
+  return { meaning: keep.join(' - '), example: examples.join(' / ') };
+}
+
 // Formato rapido, una voce per riga:
 //   rely on = contare su
 //   put off ; rimandare
@@ -60,7 +76,8 @@ export function parseQuickList(text) {
     }
     const parts = line.split(/\s*(?:=|;|\t|\s[-–—]\s)\s*/);
     if (parts.length < 2 || !parts[0]) continue;
-    items.push({ kind, term: parts[0], meaning: parts.slice(1).join(' - '), notes: '', example: '', topic: '' });
+    const { meaning, example } = kind === 'rule' ? { meaning: parts.slice(1).join(' - '), example: '' } : splitMeaning(parts[0], parts.slice(1).join(' - '));
+    items.push({ kind, term: parts[0], meaning, notes: '', example, topic: '' });
   }
   return items;
 }
