@@ -1,7 +1,7 @@
 // Service worker: rende l'app installabile e utilizzabile offline.
 // Strategia network-first per i file dell'app: online prende sempre l'ultima versione,
 // offline usa la copia in cache. Le chiamate alle API (Gemini, Groq, GitHub) non passano dalla cache.
-const CACHE = 'english-tutor-v7';
+const CACHE = 'english-tutor-v8';
 const ASSETS = [
   './',
   'index.html',
@@ -35,8 +35,10 @@ self.addEventListener('activate', (e) => {
 self.addEventListener('fetch', (e) => {
   const req = e.request;
   if (req.method !== 'GET' || new URL(req.url).origin !== self.location.origin) return;
+  // cache: 'no-cache' chiede sempre al server se c'è una versione nuova
+  // (GitHub Pages altrimenti lascia usare la copia del browser per 10 minuti).
   e.respondWith(
-    fetch(req)
+    fetch(req, { cache: 'no-cache' })
       .then((res) => {
         const copy = res.clone();
         caches.open(CACHE).then((c) => c.put(req, copy));
