@@ -101,6 +101,7 @@ function renderPractice() {
           <button class="btn ghost" data-action="skip" ${busy ? 'disabled' : ''}>Non lo so</button>
           <button class="btn primary grow" data-action="check" ${busy ? 'disabled' : ''}>${busy ? 'Controllo…' : 'Controlla'}</button>
         </div>
+        ${busy ? '<button class="link small" data-action="skip-wait">Ci mette troppo? Non aspettare e valuta da sola</button>' : ''}
       </div>`;
     if (!busy) $('#answer').focus();
     return;
@@ -154,7 +155,14 @@ function renderPracticeHome() {
     action = `<p>Per generare e correggere le frasi serve una chiave API gratuita (Gemini o Groq).</p>
       <button class="btn primary full" data-nav="settings">Configura l'AI</button>`;
   } else {
-    action = `<button class="btn primary full big" data-action="start">Inizia sessione · ${S.settings.sessionSize} frasi</button>`;
+    const focus = focusItems();
+    const names = focus.slice(0, 3).map((i) => i.term).join(', ') + (focus.length > 3 ? ` e altri ${focus.length - 3}` : '');
+    action = `
+      <div class="focus-summary small">
+        <span>🎯 ${focus.length ? `Argomenti: <b>${esc(names)}</b>` : "Argomenti: li sceglie l'app in base ai ripassi"}</span>
+        <button class="link" data-action="focus-open">${focus.length ? 'Modifica' : 'Scegli argomenti'}</button>
+      </div>
+      <button class="btn primary full big" data-action="start">Inizia sessione · ${S.settings.sessionSize} frasi</button>`;
   }
   view.innerHTML = `
     <div class="card hero">
@@ -273,8 +281,52 @@ function renderSessionEnd() {
     </div>`;
 }
 
+const focusItems = () => S.settings.focusIds.map(findItem).filter(Boolean);
+
+function focusForm() {
+  const sel = new Set(S.settings.focusIds);
+  const short = (t) => (t.length > 70 ? t.slice(0, 70) + '…' : t);
+  const group = (kind) => {
+    const list = S.data.items.filter((i) => i.kind === kind).sort((a, b) => a.term.localeCompare(b.term));
+    if (!list.length) return '';
+    return `
+      <details ${kind === 'word' ? '' : 'open'}>
+        <summary><b>${KINDS[kind].many}</b> (${list.length})</summary>
+        <div class="row gap"><button class="link" data-action="focus-all" data-kind="${kind}">Seleziona tutti</button><button class="link" data-action="focus-none" data-kind="${kind}">Nessuno</button></div>
+        ${list.map((i) => `
+          <label class="check">
+            <input type="checkbox" data-id="${i.id}" data-kind="${kind}" ${sel.has(i.id) ? 'checked' : ''}>
+            <span><b>${esc(i.term)}</b><br><span class="muted small">${esc(short(i.meaning))}</span></span>
+          </label>`).join('')}
+      </details>`;
+  };
+  openModal(`
+    <h3>🎯 Scegli argomenti</h3>
+    <p class="muted small">Le frasi della sessione useranno solo gli elementi selezionati. Senza selezione l'app sceglie da sola, in base ai ripassi.</p>
+    <input id="focus-search" type="search" placeholder="Cerca…">
+    <div class="list preview focus-list">${group('rule')}${group('phrasal')}${group('word')}</div>
+    <div class="row gap">
+      <button class="btn ghost grow" data-action="focus-clear">Nessun filtro</button>
+      <button class="btn primary grow" data-action="focus-save">Usa selezionati</button>
+    </div>`);
+  $('#focus-search').addEventListener('input', (e) => {
+    const q = e.target.value.toLowerCase();
+    document.querySelectorAll('.focus-list .check').forEach((l) => l.classList.toggle('hidden', !l.textContent.toLowerCase().includes(q)));
+    if (q) document.querySelectorAll('.focus-list details').forEach((d) => (d.open = true));
+  });
+}
+
+async function saveFocus(ids) {
+  S.settings.focusIds = ids;
+  await saveSettings();
+  closeModal();
+  render();
+}
+
 async function startSession() {
-  const picked = pickForSession(S.data.items);
+  // Con argomenti scelti si lavora solo su quelli (al massimo 14 per sessione, i più da ripassare).
+  const focus = focusItems();
+  const picked = focus.length ? pickCards(focus, 14) : pickForSession(S.data.items);
   S.session = { phase: 'loading' };
   render();
   try {
@@ -295,13 +347,18 @@ async function checkAnswer() {
   const ex = sess.exercises[sess.index];
   sess.answer = answer;
   sess.phase = 'checking';
+  const token = (sess.checkToken = Date.now());
   render();
+  // Se nel frattempo si è scelto di non aspettare, la risposta arrivata in ritardo va ignorata.
+  const stale = () => S.session !== sess || sess.checkToken !== token;
   try {
     const items = ex.itemIds.map(findItem).filter(Boolean);
     const fb = await ai.correctAnswer(S.settings, ex, answer, items);
+    if (stale()) return;
     sess.feedback = { ...fb, source: 'ai' };
     await applyResult(ex, answer, fb);
   } catch (e) {
+    if (stale()) return;
     sess.feedback = { source: 'self', error: e.message };
   }
   sess.phase = 'feedback';
@@ -816,6 +873,19 @@ const actions = {
   'save-preview': savePreview,
   reclassify,
   'save-reclassify': saveReclassify,
+  'focus-open': focusForm,
+  'focus-all': (el) => document.querySelectorAll(`.focus-list input[data-kind="${el.dataset.kind}"]`).forEach((c) => (c.checked = true)),
+  'focus-none': (el) => document.querySelectorAll(`.focus-list input[data-kind="${el.dataset.kind}"]`).forEach((c) => (c.checked = false)),
+  'focus-save': () => saveFocus([...document.querySelectorAll('.focus-list input:checked')].map((c) => c.dataset.id)),
+  'focus-clear': () => saveFocus([]),
+  'skip-wait': async () => {
+    const sess = S.session;
+    sess.checkToken = null;
+    sess.feedback = { source: 'self', error: 'hai scelto di non aspettare' };
+    sess.phase = 'feedback';
+    await saveSession();
+    render();
+  },
   'close-modal': closeModal,
   'test-ai': async () => {
     toast('Provo la connessione…');

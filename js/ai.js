@@ -156,6 +156,7 @@ ${JSON.stringify(compactItems(items))}
 Crea esattamente ${n} frasi in ITALIANO da tradurre in inglese.
 Regole:
 - Ogni frase deve richiedere almeno un elemento del materiale; idealmente combina 1 regola grammaticale ("rule") con 1-2 parole o phrasal verb ("word", "phrasal").
+- Distribuisci le frasi in modo equilibrato tra tutti gli elementi del materiale.
 - Frasi naturali di vita quotidiana, lavoro, viaggi, relazioni. Varia contesti e soggetti.
 - Non rivelare nella frase italiana quale regola usare.
 - Non introdurre strutture grammaticali molto più difficili del livello indicato.

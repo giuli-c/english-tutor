@@ -17,6 +17,7 @@ export const DEFAULT_SETTINGS = {
   gistToken: '',
   gistId: '',
   lastSync: 0,
+  focusIds: [], // argomenti scelti per gli esercizi (vuoto = sceglie l'app)
 };
 
 // Categorie dell'archivio. Phrasal verb e parole vengono usati allo stesso modo negli esercizi.

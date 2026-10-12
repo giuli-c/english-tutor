@@ -163,3 +163,7 @@ form { display: flex; flex-direction: column; gap: 12px; }
 .flashcard { min-height: 220px; justify-content: center; align-items: center; text-align: center; cursor: pointer; }
 .flashcard .tag { align-self: center; }
 .flashcard hr { width: 60%; border: none; border-top: 1px solid var(--border); margin: 6px 0; }
+
+.focus-summary { display: flex; justify-content: space-between; align-items: center; gap: 8px; background: var(--soft); border-radius: 10px; padding: 8px 10px; }
+.focus-list details { border-bottom: 1px solid var(--border); padding: 6px 0; }
+.focus-list summary { cursor: pointer; padding: 6px 2px; }
