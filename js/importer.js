@@ -45,6 +45,7 @@ export async function readFileText(file) {
 // Formato rapido, una voce per riga:
 //   rely on = contare su
 //   put off ; rimandare
+//   phrasal: give up = arrendersi, smettere
 //   regola: Present perfect = azioni passate con effetti sul presente
 export function parseQuickList(text) {
   const items = [];
@@ -52,10 +53,10 @@ export function parseQuickList(text) {
     let line = raw.trim();
     if (!line || line.startsWith('#')) continue;
     let kind = 'word';
-    const ruleMatch = line.match(/^(regola|rule|grammatica)\s*:\s*/i);
-    if (ruleMatch) {
-      kind = 'rule';
-      line = line.slice(ruleMatch[0].length);
+    const prefix = line.match(/^(regola|rule|grammatica|phrasal verb|phrasal)\s*:\s*/i);
+    if (prefix) {
+      kind = prefix[1].toLowerCase().startsWith('phrasal') ? 'phrasal' : 'rule';
+      line = line.slice(prefix[0].length);
     }
     const parts = line.split(/\s*(?:=|;|\t|\s[-–—]\s)\s*/);
     if (parts.length < 2 || !parts[0]) continue;

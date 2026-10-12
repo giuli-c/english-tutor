@@ -137,7 +137,7 @@ ${JSON.stringify(compactItems(items))}
 
 Crea esattamente ${n} frasi in ITALIANO da tradurre in inglese.
 Regole:
-- Ogni frase deve richiedere almeno un elemento del materiale; idealmente combina 1 regola grammaticale ("rule") con 1-2 parole/espressioni ("word").
+- Ogni frase deve richiedere almeno un elemento del materiale; idealmente combina 1 regola grammaticale ("rule") con 1-2 parole o phrasal verb ("word", "phrasal").
 - Frasi naturali di vita quotidiana, lavoro, viaggi, relazioni. Varia contesti e soggetti.
 - Non rivelare nella frase italiana quale regola usare.
 - Non introdurre strutture grammaticali molto più difficili del livello indicato.
@@ -196,17 +196,18 @@ Formato:
 
 export async function extractItems(s, text) {
   const user = `Dal testo seguente estrai il materiale di studio di inglese.
-- "word": parole, phrasal verbs, espressioni, modi di dire. term = in inglese, meaning = traduzione italiana.
+- "phrasal": phrasal verbs (verbo + particella, es. "give up", "look forward to"). term = in inglese, meaning = traduzione italiana.
+- "word": parole, espressioni, modi di dire. term = in inglese, meaning = traduzione italiana.
 - "rule": regole grammaticali. term = nome della regola in inglese (es. "Third conditional"), meaning = spiegazione breve in italiano, notes = struttura/formula (es. "if + past perfect, would have + participio").
 - example: un esempio in inglese se presente nel testo o facile da scrivere.
 - topic: argomento breve (es. "lavoro", "tempi verbali").
 Non inventare elementi che non sono nel testo. Niente duplicati.
 
 Formato:
-{"items":[{"kind":"word|rule","term":"...","meaning":"...","notes":"...","example":"...","topic":"..."}]}
+{"items":[{"kind":"word|phrasal|rule","term":"...","meaning":"...","notes":"...","example":"...","topic":"..."}]}
 
 TESTO:
 ${text.slice(0, 60000)}`;
   const out = await askJSON(s, TUTOR, user, 0.1);
-  return (out.items || []).filter((i) => i && i.term && (i.kind === 'word' || i.kind === 'rule'));
+  return (out.items || []).filter((i) => i && i.term && ['word', 'phrasal', 'rule'].includes(i.kind));
 }

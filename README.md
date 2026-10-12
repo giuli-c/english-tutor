@@ -2,7 +2,8 @@
 
 App installabile su telefono e PC (PWA) che:
 
-- conserva il tuo archivio di **parole, espressioni e regole grammaticali** (inserimento manuale, lista incollata o file TXT/CSV/PDF/DOCX);
+- conserva il tuo archivio di **parole, phrasal verb e regole grammaticali** (inserimento manuale, lista incollata o file TXT/CSV/PDF/DOCX);
+- ti fa ripassare i significati con le **flashcard**, scegliendo la categoria (funziona anche offline);
 - genera con l'AI **frasi in italiano da tradurre in inglese**, costruite solo sul materiale che hai caricato;
 - **corregge** la traduzione, distingue errori veri da alternative valide e spiega cosa cambiare;
 - registra ogni errore e decide **cosa ripassare e quando** (spaced repetition gestito dal codice, non dall'AI);
@@ -50,6 +51,7 @@ Una voce per riga (separatori `=`, `;`, tab o ` - `):
 rely on = contare su
 put off ; rimandare
 take for granted - dare per scontato
+phrasal: give up = arrendersi, smettere
 regola: Third conditional = ipotesi nel passato non realizzate (if + past perfect, would have + participio)
 ```
 

@@ -1,5 +1,5 @@
-import { S, load, saveData, saveSettings, saveSession, replaceData, addItem, deleteItem, findItem, isDuplicate, merge, setOnDataChange } from './store.js';
-import { pickForSession, review, mastery, isDue } from './srs.js';
+import { S, KINDS, load, saveData, saveSettings, saveSession, replaceData, addItem, deleteItem, findItem, isDuplicate, merge, setOnDataChange } from './store.js';
+import { pickForSession, pickCards, review, mastery, isDue } from './srs.js';
 import * as ai from './ai.js';
 import { readFileText, parseQuickList } from './importer.js';
 import * as sync from './sync.js';
@@ -8,7 +8,11 @@ const $ = (sel, el = document) => el.querySelector(sel);
 const view = $('#view');
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 
-const ui = { current: 'practice', libTab: 'word', libQuery: '', preview: null, syncState: 'off', syncMsg: '' };
+const ui = {
+  current: 'practice', libTab: 'word', libQuery: '', preview: null, syncState: 'off', syncMsg: '',
+  // Flashcard: categorie scelte, direzione e mazzo in corso.
+  flashKinds: new Set(Object.keys(KINDS)), flashDir: 'en-it', flash: null,
+};
 
 // ---------- Utilità UI ----------
 let toastTimer;
@@ -70,6 +74,7 @@ function render() {
 
 // ---------- PRATICA ----------
 function renderPractice() {
+  if (ui.flash) return renderFlash();
   const sess = S.session;
   if (!sess) return renderPracticeHome();
   if (sess.phase === 'loading') return (view.innerHTML = loading('Sto preparando le frasi…'));
@@ -140,8 +145,7 @@ const errorLabel = (t) => ({ grammar: 'Grammatica', vocabulary: 'Lessico', spell
 function renderPracticeHome() {
   const items = S.data.items;
   const due = items.filter((i) => isDue(i)).length;
-  const words = items.filter((i) => i.kind === 'word').length;
-  const rules = items.length - words;
+  const count = (kind) => items.filter((i) => i.kind === kind).length;
   let action;
   if (!items.length) {
     action = `<p>Il tuo archivio è vuoto. Aggiungi parole e regole grammaticali, anche caricando un file.</p>
@@ -155,14 +159,102 @@ function renderPracticeHome() {
   view.innerHTML = `
     <div class="card hero">
       <h2>Ciao! 👋</h2>
-      <ul class="stats">
-        <li><b>${words}</b> parole</li>
-        <li><b>${rules}</b> regole</li>
-        <li><b>${due}</b> da ripassare oggi</li>
+      <ul class="stats four">
+        <li><b>${count('word')}</b> parole</li>
+        <li><b>${count('phrasal')}</b> phrasal verb</li>
+        <li><b>${count('rule')}</b> regole</li>
+        <li><b>${due}</b> da ripassare</li>
       </ul>
+      <h3>✍️ Traduzione di frasi</h3>
       ${action}
     </div>
+    ${items.length ? flashHome(count) : ''}
     <p class="muted small center">L'app sceglie cosa ripassare in base ai tuoi errori; l'AI crea le frasi e le corregge.</p>`;
+}
+
+// ---------- FLASHCARD ----------
+const flashPool = () => S.data.items.filter((i) => ui.flashKinds.has(i.kind));
+
+function flashHome(count) {
+  const n = Math.min(20, flashPool().length);
+  return `
+    <div class="card">
+      <h3>🃏 Flashcard</h3>
+      <p class="muted small">Ripassa i significati, anche senza internet. Scegli le categorie:</p>
+      <div class="chips">
+        ${Object.entries(KINDS).map(([k, v]) => `
+          <button class="chip ${ui.flashKinds.has(k) ? 'active' : ''}" data-action="flash-kind" data-kind="${k}">${v.many} · ${count(k)}</button>`).join('')}
+      </div>
+      <div class="segmented">
+        <button class="${ui.flashDir === 'en-it' ? 'active' : ''}" data-action="flash-dir" data-dir="en-it">Inglese → Italiano</button>
+        <button class="${ui.flashDir === 'it-en' ? 'active' : ''}" data-action="flash-dir" data-dir="it-en">Italiano → Inglese</button>
+      </div>
+      <button class="btn primary full" data-action="flash-start" ${n ? '' : 'disabled'}>${n ? `Inizia · ${n} carte` : 'Nessuna carta nelle categorie scelte'}</button>
+    </div>`;
+}
+
+function startFlash(ids) {
+  ui.flash = { cards: ids || pickCards(flashPool()).map((i) => i.id), index: 0, flipped: false, missed: [] };
+  render();
+}
+
+function renderFlash() {
+  const f = ui.flash;
+  if (f.index >= f.cards.length) {
+    const known = f.cards.length - f.missed.length;
+    view.innerHTML = `
+      <div class="card hero">
+        <h2>Mazzo completato 🎉</h2>
+        <ul class="stats">
+          <li><b class="good-text">${known}</b> ricordate</li>
+          <li><b class="bad-text">${f.missed.length}</b> da rivedere</li>
+          <li><b>${f.cards.length}</b> carte</li>
+        </ul>
+        ${f.missed.length ? `<button class="btn primary full" data-action="flash-retry">Ripassa le ${f.missed.length} sbagliate</button>` : ''}
+        <button class="btn ${f.missed.length ? 'ghost' : 'primary'} full" data-action="flash-quit">Fine</button>
+      </div>`;
+    return;
+  }
+  const item = findItem(f.cards[f.index]);
+  if (!item) {
+    f.index++;
+    return renderFlash();
+  }
+  // Le regole si ripassano sempre dal nome alla spiegazione.
+  const reverse = ui.flashDir === 'it-en' && item.kind !== 'rule';
+  const front = reverse ? item.meaning : item.term;
+  const back = reverse ? item.term : item.meaning;
+  view.innerHTML = `
+    <div class="row between muted small"><span>Carta ${f.index + 1} di ${f.cards.length}</span>
+      <button class="link" data-action="flash-quit">Termina</button></div>
+    ${bar(Math.round((f.index / f.cards.length) * 100))}
+    <div class="card flashcard" data-action="flash-flip">
+      <span class="tag">${KINDS[item.kind].one}</span>
+      <p class="sentence">${esc(front)}</p>
+      ${f.flipped ? `
+        <hr>
+        <p class="sentence good-text">${esc(back)}</p>
+        ${item.notes ? `<p class="small">${esc(item.notes)}</p>` : ''}
+        ${item.example ? `<p class="small muted"><i>${esc(item.example)}</i></p>` : ''}
+        <button class="link" data-action="speak" data-text="${esc(item.example || item.term)}">🔊 Ascolta</button>`
+      : '<p class="muted small">Tocca per vedere la risposta</p>'}
+    </div>
+    ${f.flipped ? `
+      <div class="row gap">
+        <button class="btn bad grow" data-action="flash-grade" data-ok="0">Non ricordavo</button>
+        <button class="btn good grow" data-action="flash-grade" data-ok="1">Ricordavo</button>
+      </div>` : `<button class="btn primary full" data-action="flash-flip">Mostra risposta</button>`}`;
+}
+
+async function gradeFlash(ok) {
+  const f = ui.flash;
+  const item = findItem(f.cards[f.index]);
+  if (item) review(item, ok);
+  if (!ok) f.missed.push(f.cards[f.index]);
+  f.index++;
+  f.flipped = false;
+  render();
+  await saveData();
 }
 
 function renderSessionEnd() {
@@ -260,8 +352,7 @@ function renderLibrary() {
 
   view.innerHTML = `
     <div class="segmented">
-      <button class="${ui.libTab === 'word' ? 'active' : ''}" data-action="lib-tab" data-tab="word">Parole</button>
-      <button class="${ui.libTab === 'rule' ? 'active' : ''}" data-action="lib-tab" data-tab="rule">Regole</button>
+      ${Object.entries(KINDS).map(([k, v]) => `<button class="${ui.libTab === k ? 'active' : ''}" data-action="lib-tab" data-tab="${k}">${v.many}</button>`).join('')}
     </div>
     <div class="row gap wrap">
       <button class="btn primary grow" data-action="add-item">+ Aggiungi</button>
@@ -293,8 +384,8 @@ function itemForm(item) {
   openModal(`
     <h3>${item ? 'Modifica' : 'Nuovo elemento'}</h3>
     <form id="item-form">
-      <label>Tipo<select name="kind"><option value="word" ${i.kind === 'word' ? 'selected' : ''}>Parola / espressione</option><option value="rule" ${i.kind === 'rule' ? 'selected' : ''}>Regola grammaticale</option></select></label>
-      <label>Termine (in inglese)<input name="term" required value="${esc(i.term)}" placeholder="es. rely on / Third conditional"></label>
+      <label>Tipo<select name="kind">${Object.entries(KINDS).map(([k, v]) => `<option value="${k}" ${i.kind === k ? 'selected' : ''}>${v.many}</option>`).join('')}</select></label>
+      <label>Termine (in inglese)<input name="term" required value="${esc(i.term)}" placeholder="es. awkward / give up / Third conditional"></label>
       <label>Significato / spiegazione<textarea name="meaning" rows="2">${esc(i.meaning)}</textarea></label>
       <label>Note / struttura<textarea name="notes" rows="2">${esc(i.notes)}</textarea></label>
       <label>Esempio<input name="example" value="${esc(i.example)}"></label>
@@ -324,7 +415,7 @@ function itemForm(item) {
 function pasteListForm() {
   openModal(`
     <h3>Incolla una lista</h3>
-    <p class="muted small">Una voce per riga, ad esempio:<br><code>rely on = contare su</code><br><code>regola: Present perfect = azioni passate con effetti sul presente</code><br>
+    <p class="muted small">Una voce per riga, ad esempio:<br><code>awkward = imbarazzante</code><br><code>phrasal: give up = arrendersi</code><br><code>regola: Present perfect = azioni passate con effetti sul presente</code><br>
     Oppure incolla un testo qualsiasi (appunti, esercizi) e lascia che l'AI estragga parole e regole.</p>
     <textarea id="paste-text" rows="8"></textarea>
     <div class="row gap wrap">
@@ -365,7 +456,7 @@ function showPreview(items) {
       ${ui.preview.map((i, n) => `
         <label class="check">
           <input type="checkbox" data-n="${n}" ${i.dup ? '' : 'checked'}>
-          <span><b>${esc(i.term)}</b> <span class="tag">${i.kind === 'rule' ? 'regola' : 'parola'}</span>${i.dup ? ' <span class="tag">già presente</span>' : ''}<br>
+          <span><b>${esc(i.term)}</b> <span class="tag">${KINDS[i.kind].one}</span>${i.dup ? ' <span class="tag">già presente</span>' : ''}<br>
           <span class="muted small">${esc(i.meaning)}</span></span>
         </label>`).join('')}
     </div>
@@ -418,7 +509,7 @@ function renderProgress() {
   const ok = recent.filter((a) => a.verdict !== 'wrong').length;
   const rules = S.data.items.filter((i) => i.kind === 'rule').sort((a, b) => mastery(a) - mastery(b));
   const weakWords = S.data.items
-    .filter((i) => i.kind === 'word' && i.srs.correct + i.srs.wrong > 0)
+    .filter((i) => i.kind !== 'rule' && i.srs.correct + i.srs.wrong > 0)
     .sort((a, b) => mastery(a) - mastery(b) || b.srs.wrong - a.srs.wrong)
     .slice(0, 10);
   const lastErrors = attempts.filter((a) => a.verdict === 'wrong').slice(-8).reverse();
@@ -438,7 +529,7 @@ function renderProgress() {
         ${bar(mastery(r))}
         <div class="muted small">✓ ${r.srs.correct} · ✗ ${r.srs.wrong}</div>
       </div>`).join('') : '<p class="muted">Nessuna regola nell\'archivio.</p>'}
-    <h3>Parole su cui insistere</h3>
+    <h3>Parole e phrasal verb su cui insistere</h3>
     ${weakWords.length ? weakWords.map((w) => `
       <div class="progress-row">
         <div class="row between"><span>${esc(w.term)} <span class="muted small">· ${esc(w.meaning)}</span></span><b>${mastery(w)}%</b></div>
@@ -616,6 +707,28 @@ const actions = {
   'end-session': async () => {
     S.session = null;
     await saveSession();
+    render();
+  },
+  'flash-kind': (el) => {
+    const k = el.dataset.kind;
+    if (ui.flashKinds.has(k)) ui.flashKinds.delete(k);
+    else ui.flashKinds.add(k);
+    render();
+  },
+  'flash-dir': (el) => {
+    ui.flashDir = el.dataset.dir;
+    render();
+  },
+  'flash-start': () => startFlash(),
+  'flash-retry': () => startFlash([...ui.flash.missed]),
+  'flash-flip': () => {
+    if (ui.flash.flipped) return;
+    ui.flash.flipped = true;
+    render();
+  },
+  'flash-grade': (el) => gradeFlash(el.dataset.ok === '1'),
+  'flash-quit': () => {
+    ui.flash = null;
     render();
   },
   'lib-tab': (el) => {

@@ -26,9 +26,25 @@ export const mastery = (item) => Math.round((item.srs.box / MAX_BOX) * 100);
 
 // Sceglie gli elementi su cui generare la sessione: prima quelli scaduti e deboli,
 // con un po' di casualità per non proporre sempre le stesse combinazioni.
-export function pickForSession(items, { rules = 4, words = 10 } = {}) {
+const priority = (items) => {
   const now = Date.now();
   const score = (i) => (isDue(i, now) ? 0 : 100) + i.srs.box * 10 + (i.srs.wrong > i.srs.correct ? -5 : 0) + Math.random() * 8;
-  const top = (kind, n) => items.filter((i) => i.kind === kind).sort((a, b) => score(a) - score(b)).slice(0, n);
-  return [...top('rule', rules), ...top('word', words)];
+  return [...items].sort((a, b) => score(a) - score(b));
+};
+
+export function pickForSession(items, { rules = 4, words = 10 } = {}) {
+  return [
+    ...priority(items.filter((i) => i.kind === 'rule')).slice(0, rules),
+    ...priority(items.filter((i) => i.kind !== 'rule')).slice(0, words),
+  ];
+}
+
+// Mazzo di flashcard: stessa priorità degli esercizi, poi mescolato.
+export function pickCards(items, n = 20) {
+  const deck = priority(items).slice(0, n);
+  for (let i = deck.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [deck[i], deck[j]] = [deck[j], deck[i]];
+  }
+  return deck;
 }

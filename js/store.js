@@ -19,6 +19,13 @@ export const DEFAULT_SETTINGS = {
   lastSync: 0,
 };
 
+// Categorie dell'archivio. Phrasal verb e parole vengono usati allo stesso modo negli esercizi.
+export const KINDS = {
+  word: { one: 'parola', many: 'Parole' },
+  phrasal: { one: 'phrasal verb', many: 'Phrasal verb' },
+  rule: { one: 'regola', many: 'Regole' },
+};
+
 const emptyData = () => ({ version: 1, updatedAt: 0, items: [], attempts: [], deleted: {} });
 
 export const S = { data: emptyData(), settings: { ...DEFAULT_SETTINGS }, session: null };
@@ -54,7 +61,7 @@ export function addItem(fields) {
   const now = Date.now();
   const item = {
     id: uid(),
-    kind: fields.kind === 'rule' ? 'rule' : 'word',
+    kind: KINDS[fields.kind] ? fields.kind : 'word',
     term: (fields.term || '').trim(),
     meaning: (fields.meaning || '').trim(),
     notes: (fields.notes || '').trim(),
