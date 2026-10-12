@@ -244,6 +244,40 @@ Formato:
   return (out.changes || []).filter((c) => byId.has(c.id) && ['word', 'phrasal', 'rule'].includes(c.kind) && byId.get(c.id).kind !== c.kind);
 }
 
+// Domande a scelta multipla per il quiz di grammatica.
+// Una richiesta ogni 3 regole, per restare nei limiti dei piani gratuiti.
+export async function generateQuizzes(s, rules) {
+  const result = new Map();
+  for (let i = 0; i < rules.length; i += 3) {
+    const chunk = rules.slice(i, i + 3);
+    const user = `Livello dello studente: ${s.level} (CEFR).
+Per ognuna di queste regole grammaticali crea un quiz a scelta multipla.
+${JSON.stringify(chunk.map((r) => ({ id: r.id, term: r.term, meaning: r.meaning.slice(0, 400), notes: r.notes || undefined })))}
+
+Per ogni regola crea 8 domande:
+- "s": frase in inglese con "___" al posto della parte da scegliere. Se serve, metti tra parentesi la forma base, es. "If I ___ (know), I would have helped you."
+- "options": le scelte possibili.
+  - Regole del tipo "A vs B" (es. "-ing vs to (infinitive)"): le opzioni sono le alternative del nome della regola, uguali per tutte le domande (es. ["-ing", "to (infinitive)"]).
+  - Altre regole: 3 opzioni, cioè la forma corretta e 2 forme sbagliate ma plausibili legate alla regola (es. ["had known", "knew", "would know"]).
+- "a": l'opzione corretta, scritta ESATTAMENTE come in "options". Ogni frase deve avere una sola risposta corretta.
+- "full": la frase completa e corretta.
+- "why": spiegazione brevissima in italiano.
+Frasi naturali e varie, di vita quotidiana. Nelle regole "A vs B" distribuisci le risposte in modo equilibrato.
+
+Formato:
+{"quizzes":[{"id":"...","questions":[{"s":"...","options":["..."],"a":"...","full":"...","why":"..."}]}]}`;
+    const out = await askJSON(s, TUTOR, user, 0.7);
+    for (const q of out.quizzes || []) {
+      if (!chunk.some((r) => r.id === q.id)) continue;
+      const questions = (q.questions || [])
+        .map((x) => ({ ...x, options: (Array.isArray(x?.options) ? x.options : []).filter((o) => typeof o === 'string' && o.trim()).slice(0, 4) }))
+        .filter((x) => typeof x.s === 'string' && x.s.includes('___') && x.options.length >= 2 && x.options.includes(x.a));
+      if (questions.length >= 3) result.set(q.id, { questions, createdAt: Date.now() });
+    }
+  }
+  return result;
+}
+
 export async function extractItems(s, text) {
   const user = `Dal testo seguente estrai il materiale di studio di inglese.
 - "phrasal": phrasal verbs (verbo + particella, es. "give up", "look forward to"). term = in inglese, meaning = traduzione italiana.

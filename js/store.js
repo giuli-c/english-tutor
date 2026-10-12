@@ -18,6 +18,7 @@ export const DEFAULT_SETTINGS = {
   gistId: '',
   lastSync: 0,
   focusIds: [], // argomenti scelti per gli esercizi (vuoto = sceglie l'app)
+  quizRuleIds: [], // regole scelte per il quiz di grammatica (vuoto = tutte)
 };
 
 // Categorie dell'archivio. Phrasal verb e parole vengono usati allo stesso modo negli esercizi.

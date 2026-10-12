@@ -12,6 +12,8 @@ const ui = {
   current: 'practice', libTab: 'word', libQuery: '', preview: null, syncState: 'off', syncMsg: '',
   // Flashcard: categorie scelte, direzione e mazzo in corso.
   flashKinds: new Set(Object.keys(KINDS)), flashDir: 'en-it', flash: null,
+  // Quiz di grammatica in corso.
+  quiz: null,
 };
 
 // ---------- Utilità UI ----------
@@ -74,6 +76,7 @@ function render() {
 
 // ---------- PRATICA ----------
 function renderPractice() {
+  if (ui.quiz) return renderQuiz();
   if (ui.flash) return renderFlash();
   const sess = S.session;
   if (!sess) return renderPracticeHome();
@@ -177,6 +180,7 @@ function renderPracticeHome() {
       ${action}
     </div>
     ${items.length ? flashHome(count) : ''}
+    ${count('rule') ? quizHome() : ''}
     <p class="muted small center">L'app sceglie cosa ripassare in base ai tuoi errori; l'AI crea le frasi e le corregge.</p>`;
 }
 
@@ -265,6 +269,135 @@ async function gradeFlash(ok) {
   await saveData();
 }
 
+// ---------- QUIZ DI GRAMMATICA ----------
+// Domande a scelta multipla sulle regole. Le genera l'AI la prima volta e restano
+// salvate nella regola (anche offline); si rinnovano ogni due settimane.
+const QUIZ_SIZE = 10;
+const QUIZ_MAX_AGE = 14 * 24 * 60 * 60 * 1000;
+const quizRules = () => {
+  const sel = S.settings.quizRuleIds.map(findItem).filter(Boolean);
+  return sel.length ? sel : S.data.items.filter((i) => i.kind === 'rule');
+};
+const shuffle = (a) => {
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+};
+
+function quizHome() {
+  const sel = S.settings.quizRuleIds.map(findItem).filter(Boolean);
+  const names = sel.slice(0, 3).map((i) => i.term).join(', ') + (sel.length > 3 ? ` e altre ${sel.length - 3}` : '');
+  return `
+    <div class="card">
+      <h3>🧩 Quiz di grammatica</h3>
+      <p class="muted small">Domande a scelta multipla per mettere in pratica le regole. Le regole "… vs …" diventano una scelta tra le due forme.</p>
+      <div class="focus-summary small">
+        <span>📘 Regole: <b>${sel.length ? esc(names) : 'tutte'}</b></span>
+        <button class="link" data-action="quiz-rules">Scegli</button>
+      </div>
+      <button class="btn primary full" data-action="quiz-start">Inizia quiz · ${QUIZ_SIZE} domande</button>
+    </div>`;
+}
+
+async function startQuiz(cards) {
+  if (!cards) {
+    // Al massimo 10 regole per quiz, le più da ripassare.
+    const rules = pickCards(quizRules(), QUIZ_SIZE);
+    const stale = rules.filter((r) => !r.quiz || Date.now() - r.quiz.createdAt > QUIZ_MAX_AGE);
+    if (stale.length) {
+      if (ai.hasProvider(S.settings) && navigator.onLine) {
+        view.innerHTML = loading('Preparo le domande del quiz…');
+        try {
+          const quizzes = await ai.generateQuizzes(S.settings, stale);
+          for (const [id, quiz] of quizzes) Object.assign(findItem(id), { quiz, updatedAt: Date.now() });
+          await saveData();
+        } catch (e) {
+          toast(`Domande non preparate: ${e.message}`, true);
+        }
+      }
+    }
+    const ready = rules.filter((r) => r.quiz?.questions.length);
+    if (!ready.length) {
+      render();
+      return toast('Nessuna domanda disponibile: serve internet e una chiave API per prepararle la prima volta.', true);
+    }
+    // Domande distribuite a turno tra le regole, senza ripetizioni.
+    const pools = new Map(ready.map((r) => [r.id, shuffle([...r.quiz.questions.keys()])]));
+    cards = [];
+    while (cards.length < QUIZ_SIZE && [...pools.values()].some((p) => p.length)) {
+      for (const [id, pool] of pools) if (pool.length && cards.length < QUIZ_SIZE) cards.push({ id, q: pool.pop() });
+    }
+    cards = shuffle(cards);
+  }
+  // L'ordine delle opzioni viene mescolato per ogni carta.
+  ui.quiz = { cards: cards.map((c) => ({ ...c, order: null })), index: 0, chosen: null, wrong: [] };
+  render();
+}
+
+function renderQuiz() {
+  const z = ui.quiz;
+  if (z.index >= z.cards.length) {
+    const right = z.cards.length - z.wrong.length;
+    view.innerHTML = `
+      <div class="card hero">
+        <h2>Quiz completato 🎉</h2>
+        <ul class="stats">
+          <li><b class="good-text">${right}</b> giuste</li>
+          <li><b class="bad-text">${z.wrong.length}</b> sbagliate</li>
+          <li><b>${z.cards.length}</b> domande</li>
+        </ul>
+        ${z.wrong.length ? `<button class="btn primary full" data-action="quiz-retry">Rifai le ${z.wrong.length} sbagliate</button>` : ''}
+        <button class="btn ${z.wrong.length ? 'ghost' : 'primary'} full" data-action="quiz-quit">Fine</button>
+      </div>`;
+    return;
+  }
+  const card = z.cards[z.index];
+  const item = findItem(card.id);
+  const q = item?.quiz?.questions[card.q];
+  if (!q) {
+    z.index++;
+    return renderQuiz();
+  }
+  card.order ??= shuffle([...q.options]);
+  const answered = z.chosen !== null;
+  const ok = answered && z.chosen === q.a;
+  view.innerHTML = `
+    <div class="row between muted small"><span>Domanda ${z.index + 1} di ${z.cards.length}</span>
+      <button class="link" data-action="quiz-quit">Termina</button></div>
+    ${bar(Math.round((z.index / z.cards.length) * 100))}
+    <div class="card flashcard">
+      <span class="tag">${esc(item.term)}</span>
+      <p class="sentence">${esc(q.s)}</p>
+      ${answered ? `
+        <hr>
+        <p class="${ok ? 'good-text' : 'bad-text'}"><b>${ok ? 'Giusto ✓' : `Sbagliato: la risposta era «${esc(q.a)}»`}</b></p>
+        <p>${esc(q.full)} <button class="link" data-action="speak" data-text="${esc(q.full)}">🔊</button></p>
+        ${q.why ? `<p class="small muted">${esc(q.why)}</p>` : ''}`
+      : '<p class="muted small">Quale va usato?</p>'}
+    </div>
+    <div class="list">
+      ${card.order.map((o) => {
+        const cls = !answered ? 'ghost' : o === q.a ? 'good' : o === z.chosen ? 'bad' : 'ghost';
+        return `<button class="btn ${cls} full" data-action="quiz-pick" data-opt="${esc(o)}" ${answered ? 'disabled' : ''}>${esc(o)}</button>`;
+      }).join('')}
+    </div>
+    ${answered ? '<button class="btn primary full" data-action="quiz-next">Avanti</button>' : ''}`;
+}
+
+async function pickQuizAnswer(option) {
+  const z = ui.quiz;
+  const card = z.cards[z.index];
+  const item = findItem(card.id);
+  z.chosen = option;
+  const ok = option === item.quiz.questions[card.q].a;
+  review(item, ok);
+  if (!ok) z.wrong.push({ id: card.id, q: card.q });
+  render();
+  await saveData();
+}
+
 function renderSessionEnd() {
   const r = S.session.results;
   const count = (v) => r.filter((x) => x === v).length;
@@ -283,8 +416,10 @@ function renderSessionEnd() {
 
 const focusItems = () => S.settings.focusIds.map(findItem).filter(Boolean);
 
-function focusForm() {
-  const sel = new Set(S.settings.focusIds);
+// Finestra di scelta degli argomenti, usata per gli esercizi (focusIds) e per il quiz (quizRuleIds).
+function focusForm({ key = 'focusIds', kinds = ['rule', 'phrasal', 'word'], title = '🎯 Scegli argomenti', hint = "Le frasi della sessione useranno solo gli elementi selezionati. Senza selezione l'app sceglie da sola, in base ai ripassi." } = {}) {
+  ui.focusKey = key;
+  const sel = new Set(S.settings[key]);
   const short = (t) => (t.length > 70 ? t.slice(0, 70) + '…' : t);
   const group = (kind) => {
     const list = S.data.items.filter((i) => i.kind === kind).sort((a, b) => a.term.localeCompare(b.term));
@@ -301,10 +436,10 @@ function focusForm() {
       </details>`;
   };
   openModal(`
-    <h3>🎯 Scegli argomenti</h3>
-    <p class="muted small">Le frasi della sessione useranno solo gli elementi selezionati. Senza selezione l'app sceglie da sola, in base ai ripassi.</p>
+    <h3>${title}</h3>
+    <p class="muted small">${hint}</p>
     <input id="focus-search" type="search" placeholder="Cerca…">
-    <div class="list preview focus-list">${group('rule')}${group('phrasal')}${group('word')}</div>
+    <div class="list preview focus-list">${kinds.map(group).join('')}</div>
     <div class="row gap">
       <button class="btn ghost grow" data-action="focus-clear">Nessun filtro</button>
       <button class="btn primary grow" data-action="focus-save">Usa selezionati</button>
@@ -317,7 +452,7 @@ function focusForm() {
 }
 
 async function saveFocus(ids) {
-  S.settings.focusIds = ids;
+  S.settings[ui.focusKey] = ids;
   await saveSettings();
   closeModal();
   render();
@@ -873,7 +1008,25 @@ const actions = {
   'save-preview': savePreview,
   reclassify,
   'save-reclassify': saveReclassify,
-  'focus-open': focusForm,
+  'focus-open': () => focusForm(),
+  'quiz-rules': () => focusForm({
+    key: 'quizRuleIds',
+    kinds: ['rule'],
+    title: '📘 Regole per il quiz',
+    hint: 'Il quiz userà solo le regole selezionate. Senza selezione: tutte.',
+  }),
+  'quiz-start': () => startQuiz(),
+  'quiz-retry': () => startQuiz(ui.quiz.wrong),
+  'quiz-pick': (el) => pickQuizAnswer(el.dataset.opt),
+  'quiz-next': () => {
+    ui.quiz.index++;
+    ui.quiz.chosen = null;
+    render();
+  },
+  'quiz-quit': () => {
+    ui.quiz = null;
+    render();
+  },
   'focus-all': (el) => document.querySelectorAll(`.focus-list input[data-kind="${el.dataset.kind}"]`).forEach((c) => (c.checked = true)),
   'focus-none': (el) => document.querySelectorAll(`.focus-list input[data-kind="${el.dataset.kind}"]`).forEach((c) => (c.checked = false)),
   'focus-save': () => saveFocus([...document.querySelectorAll('.focus-list input:checked')].map((c) => c.dataset.id)),
