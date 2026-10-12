@@ -21,6 +21,7 @@ let geminiThinking = 0;
 async function callGemini(s, system, user, temperature) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(s.geminiModel)}:generateContent`;
   let res;
+  let busyRetries = 0;
   for (;;) {
     const thinkingConfig = GEMINI_THINKING[geminiThinking];
     res = await fetch(url, {
@@ -32,6 +33,12 @@ async function callGemini(s, system, user, temperature) {
         generationConfig: { responseMimeType: 'application/json', temperature, ...(thinkingConfig && { thinkingConfig }) },
       }),
     });
+    // 503/500: server sovraccarico, di solito passa in pochi secondi.
+    if ((res.status === 503 || res.status === 500) && busyRetries < 2) {
+      busyRetries++;
+      await new Promise((r) => setTimeout(r, 2000 * busyRetries));
+      continue;
+    }
     if (res.status !== 400 || !thinkingConfig) break;
     const text = await res.clone().text();
     if (!/think/i.test(text)) break;
@@ -195,7 +202,20 @@ Formato:
 }
 
 // Controlla le categorie degli elementi già salvati e restituisce solo quelli da spostare.
-export async function classifyItems(s, items) {
+// L'archivio viene inviato a blocchi, con i significati accorciati, per restare
+// nei limiti dei piani gratuiti (Groq: circa 8000 token al minuto).
+export async function classifyItems(s, items, onProgress = () => {}) {
+  const CHUNK = 40;
+  const changes = [];
+  for (let i = 0; i < items.length; i += CHUNK) {
+    onProgress(Math.floor(i / CHUNK) + 1, Math.ceil(items.length / CHUNK));
+    changes.push(...(await classifyChunk(s, items.slice(i, i + CHUNK))));
+  }
+  return changes;
+}
+
+async function classifyChunk(s, items) {
+  const short = (t) => (t.length > 80 ? t.slice(0, 80) + '…' : t);
   const user = `Ecco un archivio di studio di inglese. Ogni elemento ha una categoria ("kind"):
 - "word": parole, espressioni, modi di dire;
 - "phrasal": phrasal verbs (verbo + particella/preposizione, es. "give up", "rely on", "look forward to");
@@ -203,7 +223,7 @@ export async function classifyItems(s, items) {
 
 Indica SOLO gli elementi la cui categoria è sbagliata, con la categoria corretta. Se è tutto corretto restituisci una lista vuota.
 
-${JSON.stringify(items.map((i) => ({ id: i.id, kind: i.kind, term: i.term, meaning: i.meaning })))}
+${JSON.stringify(items.map((i) => ({ id: i.id, kind: i.kind, term: i.term, meaning: short(i.meaning) })))}
 
 Formato:
 {"changes":[{"id":"...","kind":"word|phrasal|rule"}]}`;

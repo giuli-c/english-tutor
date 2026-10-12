@@ -472,7 +472,9 @@ async function reclassify() {
   openModal(loading("L'AI sta controllando le categorie…"));
   let changes;
   try {
-    changes = await ai.classifyItems(S.settings, S.data.items);
+    changes = await ai.classifyItems(S.settings, S.data.items, (n, tot) => {
+      if (tot > 1) openModal(loading(`L'AI sta controllando le categorie… (blocco ${n} di ${tot})`));
+    });
   } catch (e) {
     closeModal();
     return toast(e.message, true);
