@@ -148,33 +148,38 @@ Rispondi SEMPRE e SOLO con JSON valido, senza testo fuori dal JSON. Le spiegazio
 const compactItems = (items) =>
   items.map((i) => ({ id: i.id, kind: i.kind, term: i.term, meaning: i.meaning, notes: i.notes || undefined }));
 
-export async function generateExercises(s, items, n) {
+// plan: per ogni frase, la lista degli elementi che deve allenare (deciso da srs.planSession).
+export async function generateExercises(s, plan) {
+  const items = [...new Map(plan.flat().map((i) => [i.id, i])).values()];
+  const n = plan.length;
   const user = `Livello dello studente: ${s.level} (CEFR).
-Materiale studiato (usa SOLO questo come obiettivo dell'esercizio):
+Materiale studiato:
 ${JSON.stringify(compactItems(items))}
 
-Crea esattamente ${n} frasi in ITALIANO da tradurre in inglese.
+Crea esattamente ${n} frasi in ITALIANO da tradurre in inglese, seguendo questo piano.
+Ogni frase "n" deve richiedere TUTTI gli elementi indicati in "use" (id del materiale):
+${JSON.stringify(plan.map((p, k) => ({ n: k + 1, use: p.map((i) => i.id) })))}
+
 Regole:
-- Ogni frase deve richiedere almeno un elemento del materiale; idealmente combina 1 regola grammaticale ("rule") con 1-2 parole o phrasal verb ("word", "phrasal").
-- Distribuisci le frasi in modo equilibrato tra tutti gli elementi del materiale.
+- Rispetta il piano: non usare come obiettivo elementi diversi da quelli indicati per ogni frase.
 - Frasi naturali di vita quotidiana, lavoro, viaggi, relazioni. Varia contesti e soggetti.
 - Non rivelare nella frase italiana quale regola usare.
 - Non introdurre strutture grammaticali molto più difficili del livello indicato.
 - "en" è la traduzione di riferimento più naturale; "alternatives" altre traduzioni corrette (0-2).
-- "itemIds" contiene gli id ESATTI degli elementi del materiale che la frase allena.
+- "n" è il numero della frase nel piano.
 - "hint" è un piccolo aiuto in italiano che non dà la soluzione.
 
 Formato:
-{"exercises":[{"it":"...","en":"...","alternatives":["..."],"itemIds":["..."],"hint":"..."}]}`;
+{"exercises":[{"n":1,"it":"...","en":"...","alternatives":["..."],"hint":"..."}]}`;
   const out = await askJSON(s, TUTOR, user, 0.9);
-  const valid = new Set(items.map((i) => i.id));
   const exercises = (out.exercises || [])
     .filter((e) => e && typeof e.it === 'string' && typeof e.en === 'string')
-    .map((e) => ({
+    .map((e, k) => ({
       it: e.it.trim(),
       en: e.en.trim(),
       alternatives: Array.isArray(e.alternatives) ? e.alternatives.filter((a) => typeof a === 'string') : [],
-      itemIds: (Array.isArray(e.itemIds) ? e.itemIds : []).filter((id) => valid.has(id)),
+      // Gli elementi allenati sono quelli del piano, non quelli dichiarati dall'AI.
+      itemIds: (plan[(Number.isInteger(e.n) ? e.n : k + 1) - 1] || plan[k] || []).map((i) => i.id),
       hint: typeof e.hint === 'string' ? e.hint : '',
     }));
   if (!exercises.length) throw new Error("L'AI non ha restituito esercizi validi. Riprova.");

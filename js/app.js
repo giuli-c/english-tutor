@@ -1,5 +1,5 @@
 import { S, KINDS, load, saveData, saveSettings, saveSession, replaceData, addItem, deleteItem, findItem, isDuplicate, merge, setOnDataChange } from './store.js';
-import { pickForSession, pickCards, review, mastery, isDue } from './srs.js';
+import { planSession, pickCards, review, mastery, isDue } from './srs.js';
 import * as ai from './ai.js';
 import { readFileText, parseQuickList, splitMeaning } from './importer.js';
 import * as sync from './sync.js';
@@ -459,13 +459,16 @@ async function saveFocus(ids) {
 }
 
 async function startSession() {
-  // Con argomenti scelti si lavora solo su quelli (al massimo 14 per sessione, i più da ripassare).
+  // Con argomenti scelti si lavora solo su quelli. Il piano privilegia gli elementi
+  // usati in meno frasi finora (contati dai tentativi salvati).
   const focus = focusItems();
-  const picked = focus.length ? pickCards(focus, 14) : pickForSession(S.data.items);
+  const usage = new Map();
+  for (const a of S.data.attempts) for (const id of a.itemIds || []) usage.set(id, (usage.get(id) || 0) + 1);
+  const plan = planSession(focus.length ? focus : S.data.items, S.settings.sessionSize, usage);
   S.session = { phase: 'loading' };
   render();
   try {
-    const exercises = await ai.generateExercises(S.settings, picked, S.settings.sessionSize);
+    const exercises = await ai.generateExercises(S.settings, plan);
     S.session = { exercises, index: 0, results: [], phase: 'answer', answer: '', feedback: null };
     await saveSession();
   } catch (e) {

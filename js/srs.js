@@ -32,11 +32,34 @@ const priority = (items) => {
   return [...items].sort((a, b) => score(a) - score(b));
 };
 
-export function pickForSession(items, { rules = 4, words = 10 } = {}) {
-  return [
-    ...priority(items.filter((i) => i.kind === 'rule')).slice(0, rules),
-    ...priority(items.filter((i) => i.kind !== 'rule')).slice(0, words),
-  ];
+// Piano della sessione di frasi: per ogni frase, gli elementi che deve allenare.
+// usage = quante frasi hanno già usato ogni elemento: i meno usati hanno la precedenza,
+// così prima o poi tutto l'archivio viene allenato. Ogni frase ha un elemento principale
+// diverso; le frasi sulle regole aggiungono una parola o un phrasal verb non ancora usati.
+export function planSession(items, n, usage = new Map()) {
+  const now = Date.now();
+  const score = (i) =>
+    Math.min(usage.get(i.id) || 0, 20) * 10 + (isDue(i, now) ? 0 : 30) + i.srs.box * 3 - (i.srs.wrong > i.srs.correct ? 8 : 0) + Math.random() * 6;
+  const byScore = (list) => [...list].sort((a, b) => score(a) - score(b));
+  const rules = byScore(items.filter((i) => i.kind === 'rule'));
+  const words = byScore(items.filter((i) => i.kind !== 'rule'));
+
+  // Circa 4 frasi su 10 sulle regole, adattandosi a ciò che c'è nell'archivio.
+  let nRules = Math.min(rules.length, Math.round(n * 0.4));
+  const nWords = Math.min(words.length, n - nRules);
+  nRules = Math.min(rules.length, n - nWords);
+  const main = [...rules.slice(0, nRules), ...words.slice(0, nWords)];
+  if (!main.length) return [];
+  // Archivio (o selezione) più piccolo delle frasi richieste: si ricomincia dal primo.
+  for (let k = 0; main.length < n; k++) main.push(main[k]);
+
+  const spare = words.slice(nWords);
+  const plan = main.map((m) => (m.kind === 'rule' && spare.length ? [m, spare.shift()] : [m]));
+  for (let i = plan.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [plan[i], plan[j]] = [plan[j], plan[i]];
+  }
+  return plan;
 }
 
 // Mazzo di flashcard: stessa priorità degli esercizi, poi mescolato.
