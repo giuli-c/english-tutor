@@ -1,5 +1,7 @@
 // Livello AI: Gemini come provider principale, Groq come riserva (e primo per le correzioni, perché più veloce).
 // Ogni chiamata chiede una risposta JSON strutturata, che viene poi validata dal codice.
+// Frasi da tradurre e spiegazioni sono nella lingua scelta nell'app (s.lang).
+import { t, langInfo } from './i18n.js';
 
 export const hasProvider = (s) => Boolean(s.geminiKey || s.groqKey);
 
@@ -11,14 +13,14 @@ async function timedFetch(url, options = {}) {
   try {
     return await fetch(url, { ...options, signal: AbortSignal.timeout(40000) });
   } catch (e) {
-    if (e.name === 'TimeoutError' || e.name === 'AbortError') throw new Error(`${new URL(url).hostname.includes('groq') ? 'Groq' : 'Gemini'}: nessuna risposta entro 40 secondi (servizio sovraccarico, riprova più tardi)`);
+    if (e.name === 'TimeoutError' || e.name === 'AbortError') throw new Error(t('ai.timeout', { provider: new URL(url).hostname.includes('groq') ? 'Groq' : 'Gemini' }));
     throw e;
   }
 }
 
 async function fail(provider, res) {
   const text = await res.text();
-  const msg = `${provider} ${res.status}${res.status === 429 ? ' (quota gratuita esaurita per ora)' : ''}: ${text.slice(0, 200)}`;
+  const msg = `${provider} ${res.status}${res.status === 429 ? t('ai.quota') : ''}: ${text.slice(0, 200)}`;
   if (res.status === 404 || text.includes('model_not_found') || text.includes('decommissioned')) throw new ModelNotFound(msg);
   throw new Error(msg);
 }
@@ -121,7 +123,7 @@ function parseJSON(text) {
 export async function askJSON(s, system, user, temperature = 0.4, { fast = false } = {}) {
   const providers = PROVIDERS.filter((p) => s[p.key]);
   if (fast) providers.reverse();
-  if (!providers.length) throw new Error('Nessuna chiave API configurata (vai in Impostazioni).');
+  if (!providers.length) throw new Error(t('ai.noProvider'));
   const errors = [];
   for (const p of providers) {
     try {
@@ -142,8 +144,10 @@ export async function askJSON(s, system, user, temperature = 0.4, { fast = false
   throw new Error(errors.join(' | '));
 }
 
-const TUTOR = `Sei un tutor di inglese esperto per una persona madrelingua italiana.
-Rispondi SEMPRE e SOLO con JSON valido, senza testo fuori dal JSON. Le spiegazioni sono in italiano, brevi e chiare.`;
+// Lingua madre dello studente, scritta in italiano per i prompt (es. "tedesco").
+const native = (s) => langInfo(s.lang).native;
+const tutor = (s) => `Sei un tutor di inglese esperto per una persona di madrelingua ${native(s)}.
+Rispondi SEMPRE e SOLO con JSON valido, senza testo fuori dal JSON. Le spiegazioni sono in ${native(s)}, brevi e chiare.`;
 
 const compactItems = (items) =>
   items.map((i) => ({ id: i.id, kind: i.kind, term: i.term, meaning: i.meaning, notes: i.notes || undefined }));
@@ -156,22 +160,22 @@ export async function generateExercises(s, plan) {
 Materiale studiato:
 ${JSON.stringify(compactItems(items))}
 
-Crea esattamente ${n} frasi in ITALIANO da tradurre in inglese, seguendo questo piano.
+Crea esattamente ${n} frasi in ${native(s).toUpperCase()} da tradurre in inglese, seguendo questo piano.
 Ogni frase "n" deve richiedere TUTTI gli elementi indicati in "use" (id del materiale):
 ${JSON.stringify(plan.map((p, k) => ({ n: k + 1, use: p.map((i) => i.id) })))}
 
 Regole:
 - Rispetta il piano: non usare come obiettivo elementi diversi da quelli indicati per ogni frase.
 - Frasi naturali di vita quotidiana, lavoro, viaggi, relazioni. Varia contesti e soggetti.
-- Non rivelare nella frase italiana quale regola usare.
+- "it" è la frase in ${native(s)} da tradurre. Non rivelare quale regola usare.
 - Non introdurre strutture grammaticali molto più difficili del livello indicato.
 - "en" è la traduzione di riferimento più naturale; "alternatives" altre traduzioni corrette (0-2).
 - "n" è il numero della frase nel piano.
-- "hint" è un piccolo aiuto in italiano che non dà la soluzione.
+- "hint" è un piccolo aiuto in ${native(s)} che non dà la soluzione.
 
 Formato:
 {"exercises":[{"n":1,"it":"...","en":"...","alternatives":["..."],"hint":"..."}]}`;
-  const out = await askJSON(s, TUTOR, user, 0.9);
+  const out = await askJSON(s, tutor(s), user, 0.9);
   const exercises = (out.exercises || [])
     .filter((e) => e && typeof e.it === 'string' && typeof e.en === 'string')
     .map((e, k) => ({
@@ -182,12 +186,12 @@ Formato:
       itemIds: (plan[(Number.isInteger(e.n) ? e.n : k + 1) - 1] || plan[k] || []).map((i) => i.id),
       hint: typeof e.hint === 'string' ? e.hint : '',
     }));
-  if (!exercises.length) throw new Error("L'AI non ha restituito esercizi validi. Riprova.");
+  if (!exercises.length) throw new Error(t('ai.noExercises'));
   return exercises;
 }
 
 export async function correctAnswer(s, ex, answer, items) {
-  const user = `Frase italiana: "${ex.it}"
+  const user = `Frase in ${native(s)}: "${ex.it}"
 Traduzione di riferimento: "${ex.en}"${ex.alternatives.length ? `\nAltre traduzioni corrette: ${JSON.stringify(ex.alternatives)}` : ''}
 Elementi allenati: ${JSON.stringify(compactItems(items))}
 Traduzione dello studente: "${answer}"
@@ -197,12 +201,13 @@ Valuta la traduzione dello studente.
 - Ignora maiuscole e punteggiatura finale.
 - verdict: "correct" (corretta), "minor" (piccolo errore di ortografia/articolo che non cambia il senso), "wrong" (errore di grammatica, lessico o significato).
 - corrected: la versione corretta più vicina a ciò che ha scritto lo studente.
-- natural: come lo direbbe un madrelingua (può coincidere con corrected).
+- natural: come lo direbbe un madrelingua inglese (può coincidere con corrected).
+- explanation ed errors[].what: in ${native(s)}.
 - errors: un oggetto per ogni errore; itemId è l'id dell'elemento allenato coinvolto, oppure null se l'errore non riguarda il materiale.
 
 Formato:
 {"verdict":"correct|minor|wrong","corrected":"...","natural":"...","explanation":"...","errors":[{"type":"grammar|vocabulary|spelling|word_order|missing|other","itemId":"... o null","what":"..."}]}`;
-  const out = await askJSON(s, TUTOR, user, 0.2, { fast: true });
+  const out = await askJSON(s, tutor(s), user, 0.2, { fast: true });
   const verdict = ['correct', 'minor', 'wrong'].includes(out.verdict) ? out.verdict : 'wrong';
   const valid = new Set(items.map((i) => i.id));
   return {
@@ -244,7 +249,7 @@ ${JSON.stringify(items.map((i) => ({ id: i.id, kind: i.kind, term: i.term, meani
 
 Formato:
 {"changes":[{"id":"...","kind":"word|phrasal|rule"}]}`;
-  const out = await askJSON(s, TUTOR, user, 0);
+  const out = await askJSON(s, tutor(s), user, 0);
   const byId = new Map(items.map((i) => [i.id, i]));
   return (out.changes || []).filter((c) => byId.has(c.id) && ['word', 'phrasal', 'rule'].includes(c.kind) && byId.get(c.id).kind !== c.kind);
 }
@@ -266,18 +271,18 @@ Per ogni regola crea 8 domande:
   - Altre regole: 3 opzioni, cioè la forma corretta e 2 forme sbagliate ma plausibili legate alla regola (es. ["had known", "knew", "would know"]).
 - "a": l'opzione corretta, scritta ESATTAMENTE come in "options". Ogni frase deve avere una sola risposta corretta.
 - "full": la frase completa e corretta.
-- "why": spiegazione brevissima in italiano.
+- "why": spiegazione brevissima in ${native(s)}.
 Frasi naturali e varie, di vita quotidiana. Nelle regole "A vs B" distribuisci le risposte in modo equilibrato.
 
 Formato:
 {"quizzes":[{"id":"...","questions":[{"s":"...","options":["..."],"a":"...","full":"...","why":"..."}]}]}`;
-    const out = await askJSON(s, TUTOR, user, 0.7);
+    const out = await askJSON(s, tutor(s), user, 0.7);
     for (const q of out.quizzes || []) {
       if (!chunk.some((r) => r.id === q.id)) continue;
       const questions = (q.questions || [])
         .map((x) => ({ ...x, options: (Array.isArray(x?.options) ? x.options : []).filter((o) => typeof o === 'string' && o.trim()).slice(0, 4) }))
         .filter((x) => typeof x.s === 'string' && x.s.includes('___') && x.options.length >= 2 && x.options.includes(x.a));
-      if (questions.length >= 3) result.set(q.id, { questions, createdAt: Date.now() });
+      if (questions.length >= 3) result.set(q.id, { questions, createdAt: Date.now(), lang: s.lang || 'it' });
     }
   }
   return result;
@@ -285,11 +290,11 @@ Formato:
 
 export async function extractItems(s, text) {
   const user = `Dal testo seguente estrai il materiale di studio di inglese.
-- "phrasal": phrasal verbs (verbo + particella, es. "give up", "look forward to"). term = in inglese, meaning = traduzione italiana.
-- "word": parole, espressioni, modi di dire. term = in inglese, meaning = traduzione italiana.
-- "rule": regole grammaticali. term = nome della regola in inglese (es. "Third conditional"), meaning = spiegazione breve in italiano, notes = struttura/formula (es. "if + past perfect, would have + participio").
+- "phrasal": phrasal verbs (verbo + particella, es. "give up", "look forward to"). term = in inglese, meaning = traduzione in ${native(s)}.
+- "word": parole, espressioni, modi di dire. term = in inglese, meaning = traduzione in ${native(s)}.
+- "rule": regole grammaticali. term = nome della regola in inglese (es. "Third conditional"), meaning = spiegazione breve in ${native(s)}, notes = struttura/formula (es. "if + past perfect, would have + past participle").
 - example: un esempio in inglese se presente nel testo o facile da scrivere.
-- topic: argomento breve (es. "lavoro", "tempi verbali").
+- topic: argomento breve in ${native(s)}.
 Non inventare elementi che non sono nel testo. Niente duplicati.
 
 Formato:
@@ -297,6 +302,6 @@ Formato:
 
 TESTO:
 ${text.slice(0, 60000)}`;
-  const out = await askJSON(s, TUTOR, user, 0.1);
+  const out = await askJSON(s, tutor(s), user, 0.1);
   return (out.items || []).filter((i) => i && i.term && ['word', 'phrasal', 'rule'].includes(i.kind));
 }

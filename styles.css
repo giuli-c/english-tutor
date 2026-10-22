@@ -168,3 +168,4 @@ form { display: flex; flex-direction: column; gap: 12px; }
 .focus-list details { border-bottom: 1px solid var(--border); padding: 6px 0; }
 .focus-list summary { cursor: pointer; padding: 6px 2px; }
 .btn.good:disabled, .btn.bad:disabled { opacity: 1; }
+.lang-select { width: auto; margin: 0; padding: 4px 8px; font-size: 14px; border-radius: 8px; background: var(--card); }

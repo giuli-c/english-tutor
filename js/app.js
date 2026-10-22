@@ -3,10 +3,12 @@ import { planSession, pickCards, review, mastery, isDue } from './srs.js';
 import * as ai from './ai.js';
 import { readFileText, parseQuickList, splitMeaning } from './importer.js';
 import * as sync from './sync.js';
+import { LANGS, t, setLang, getLang, langInfo } from './i18n.js';
 
 const $ = (sel, el = document) => el.querySelector(sel);
 const view = $('#view');
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+const kindLabel = (kind, form = 'many') => t(`kind.${kind}.${form}`);
 
 const ui = {
   current: 'practice', libTab: 'word', libQuery: '', preview: null, syncState: 'off', syncMsg: '',
@@ -15,6 +17,17 @@ const ui = {
   // Quiz di grammatica in corso.
   quiz: null,
 };
+
+// ---------- Lingua ----------
+// Aggiorna le parti fisse della pagina (barra in basso, menu della lingua) e ridisegna la vista.
+function applyLang() {
+  setLang(S.settings.lang);
+  document.documentElement.lang = getLang();
+  document.querySelectorAll('[data-i18n]').forEach((el) => (el.textContent = t(el.dataset.i18n)));
+  const select = $('#lang-select');
+  select.innerHTML = Object.entries(LANGS).map(([k, v]) => `<option value="${k}" ${k === getLang() ? 'selected' : ''}>${v.label}</option>`).join('');
+  $('#sync-dot').title = syncLabel();
+}
 
 // ---------- Utilità UI ----------
 let toastTimer;
@@ -38,9 +51,10 @@ function closeModal() {
 
 const bar = (pct) => `<div class="bar"><span style="width:${pct}%"></span></div>`;
 const loading = (msg) => `<div class="center muted"><div class="spinner"></div><p>${esc(msg)}</p></div>`;
+const listNames = (items, moreKey) => items.slice(0, 3).map((i) => i.term).join(', ') + (items.length > 3 ? t(moreKey, { n: items.length - 3 }) : '');
 
 function speak(text) {
-  if (!('speechSynthesis' in window)) return toast('Sintesi vocale non supportata su questo browser', true);
+  if (!('speechSynthesis' in window)) return toast(t('tts.unsupported'), true);
   speechSynthesis.cancel();
   const u = new SpeechSynthesisUtterance(text);
   u.lang = 'en-US';
@@ -57,7 +71,7 @@ function listen(textarea, button) {
     const said = e.results[0][0].transcript;
     textarea.value = (textarea.value ? textarea.value + ' ' : '') + said;
   };
-  rec.onerror = (e) => toast('Microfono: ' + e.error, true);
+  rec.onerror = (e) => toast(t('mic.error', { e: e.error }), true);
   rec.onend = () => button.classList.remove('recording');
   rec.start();
 }
@@ -80,31 +94,31 @@ function renderPractice() {
   if (ui.flash) return renderFlash();
   const sess = S.session;
   if (!sess) return renderPracticeHome();
-  if (sess.phase === 'loading') return (view.innerHTML = loading('Sto preparando le frasi…'));
+  if (sess.phase === 'loading') return (view.innerHTML = loading(t('session.loading')));
   if (sess.phase === 'done') return renderSessionEnd();
 
   const ex = sess.exercises[sess.index];
   const head = `
-    <div class="row between muted small"><span>Frase ${sess.index + 1} di ${sess.exercises.length}</span>
-      <button class="link" data-action="quit-session">Termina</button></div>
+    <div class="row between muted small"><span>${t('session.progress', { i: sess.index + 1, n: sess.exercises.length })}</span>
+      <button class="link" data-action="quit-session">${t('common.end')}</button></div>
     ${bar(Math.round((sess.index / sess.exercises.length) * 100))}
     <div class="card">
-      <div class="label">Traduci in inglese</div>
+      <div class="label">${t('session.translate')}</div>
       <p class="sentence">${esc(ex.it)}</p>
-      ${ex.hint ? `<details class="hint"><summary>Suggerimento</summary>${esc(ex.hint)}</details>` : ''}
+      ${ex.hint ? `<details class="hint"><summary>${t('session.hint')}</summary>${esc(ex.hint)}</details>` : ''}
     </div>`;
 
   if (sess.phase === 'answer' || sess.phase === 'checking') {
     const busy = sess.phase === 'checking';
     view.innerHTML = `${head}
       <div class="card">
-        <textarea id="answer" rows="3" placeholder="Scrivi qui la tua traduzione…" autocapitalize="sentences" ${busy ? 'disabled' : ''}>${esc(sess.answer || '')}</textarea>
+        <textarea id="answer" rows="3" placeholder="${t('session.placeholder')}" autocapitalize="sentences" ${busy ? 'disabled' : ''}>${esc(sess.answer || '')}</textarea>
         <div class="row gap">
-          ${Recognition ? `<button class="btn ghost icon" data-action="mic" title="Rispondi a voce" ${busy ? 'disabled' : ''}>🎤</button>` : ''}
-          <button class="btn ghost" data-action="skip" ${busy ? 'disabled' : ''}>Non lo so</button>
-          <button class="btn primary grow" data-action="check" ${busy ? 'disabled' : ''}>${busy ? 'Controllo…' : 'Controlla'}</button>
+          ${Recognition ? `<button class="btn ghost icon" data-action="mic" title="${t('session.mic')}" ${busy ? 'disabled' : ''}>🎤</button>` : ''}
+          <button class="btn ghost" data-action="skip" ${busy ? 'disabled' : ''}>${t('session.dontKnow')}</button>
+          <button class="btn primary grow" data-action="check" ${busy ? 'disabled' : ''}>${busy ? t('session.checking') : t('session.check')}</button>
         </div>
-        ${busy ? '<button class="link small" data-action="skip-wait">Ci mette troppo? Non aspettare e valuta da sola</button>' : ''}
+        ${busy ? `<button class="link small" data-action="skip-wait">${t('session.skipWait')}</button>` : ''}
       </div>`;
     if (!busy) $('#answer').focus();
     return;
@@ -116,35 +130,36 @@ function renderPractice() {
   if (fb.source === 'self') {
     body = `
       <div class="card">
-        <p class="muted small">Correzione AI non disponibile${fb.error ? ` (${esc(fb.error)})` : ''}. Confronta tu e valuta.</p>
-        <div class="label">La tua risposta</div><p>${esc(sess.answer)}</p>
-        <div class="label">Riferimento</div><p class="good-text">${esc(ex.en)} <button class="link" data-action="speak" data-text="${esc(ex.en)}">🔊</button></p>
-        ${ex.alternatives.length ? `<div class="label">Alternative</div><ul>${ex.alternatives.map((a) => `<li>${esc(a)}</li>`).join('')}</ul>` : ''}
+        <p class="muted small">${t('session.noAi', { err: fb.error ? ` (${esc(fb.error)})` : '' })}</p>
+        <div class="label">${t('session.yourAnswer')}</div><p>${esc(sess.answer)}</p>
+        <div class="label">${t('session.reference')}</div><p class="good-text">${esc(ex.en)} <button class="link" data-action="speak" data-text="${esc(ex.en)}">🔊</button></p>
+        ${ex.alternatives.length ? `<div class="label">${t('session.alternatives')}</div><ul>${ex.alternatives.map((a) => `<li>${esc(a)}</li>`).join('')}</ul>` : ''}
         <div class="row gap">
-          <button class="btn bad grow" data-action="self" data-verdict="wrong">Sbagliata</button>
-          <button class="btn warn grow" data-action="self" data-verdict="minor">Quasi</button>
-          <button class="btn good grow" data-action="self" data-verdict="correct">Corretta</button>
+          <button class="btn bad grow" data-action="self" data-verdict="wrong">${t('session.selfWrong')}</button>
+          <button class="btn warn grow" data-action="self" data-verdict="minor">${t('session.selfMinor')}</button>
+          <button class="btn good grow" data-action="self" data-verdict="correct">${t('session.selfCorrect')}</button>
         </div>
       </div>`;
   } else {
-    const badge = { correct: ['good', 'Corretta ✓'], minor: ['warn', 'Quasi giusta'], wrong: ['bad', 'Da rivedere'] }[fb.verdict];
+    const badge = { correct: ['good', t('session.badgeCorrect')], minor: ['warn', t('session.badgeMinor')], wrong: ['bad', t('session.badgeWrong')] }[fb.verdict];
     const best = fb.natural || fb.corrected || ex.en;
     body = `
       <div class="card">
         <span class="badge ${badge[0]}">${badge[1]}</span>
-        ${sess.answer ? `<div class="label">La tua risposta</div><p>${esc(sess.answer)}</p>` : ''}
-        ${fb.verdict !== 'correct' && fb.corrected ? `<div class="label">Corretta</div><p class="good-text">${esc(fb.corrected)}</p>` : ''}
-        <div class="label">Come lo direbbe un madrelingua</div>
+        ${sess.answer ? `<div class="label">${t('session.yourAnswer')}</div><p>${esc(sess.answer)}</p>` : ''}
+        ${fb.verdict !== 'correct' && fb.corrected ? `<div class="label">${t('session.corrected')}</div><p class="good-text">${esc(fb.corrected)}</p>` : ''}
+        <div class="label">${t('session.native')}</div>
         <p>${esc(best)} <button class="link" data-action="speak" data-text="${esc(best)}">🔊</button></p>
-        ${fb.explanation ? `<div class="label">Spiegazione</div><p>${esc(fb.explanation)}</p>` : ''}
-        ${fb.errors?.length ? `<div class="label">Errori</div><ul>${fb.errors.map((e) => `<li><b>${esc(errorLabel(e.type))}</b>: ${esc(e.what)}</li>`).join('')}</ul>` : ''}
-        <button class="btn primary full" data-action="next">Avanti</button>
+        ${fb.explanation ? `<div class="label">${t('session.explanation')}</div><p>${esc(fb.explanation)}</p>` : ''}
+        ${fb.errors?.length ? `<div class="label">${t('session.errors')}</div><ul>${fb.errors.map((e) => `<li><b>${esc(errorLabel(e.type))}</b>: ${esc(e.what)}</li>`).join('')}</ul>` : ''}
+        <button class="btn primary full" data-action="next">${t('common.next')}</button>
       </div>`;
   }
   view.innerHTML = head + body;
 }
 
-const errorLabel = (t) => ({ grammar: 'Grammatica', vocabulary: 'Lessico', spelling: 'Ortografia', word_order: 'Ordine delle parole', missing: 'Manca qualcosa' })[t] || 'Altro';
+const ERROR_TYPES = ['grammar', 'vocabulary', 'spelling', 'word_order', 'missing'];
+const errorLabel = (type) => t(ERROR_TYPES.includes(type) ? `error.${type}` : 'error.other');
 
 function renderPracticeHome() {
   const items = S.data.items;
@@ -152,36 +167,35 @@ function renderPracticeHome() {
   const count = (kind) => items.filter((i) => i.kind === kind).length;
   let action;
   if (!items.length) {
-    action = `<p>Il tuo archivio è vuoto. Aggiungi parole e regole grammaticali, anche caricando un file.</p>
-      <button class="btn primary full" data-nav="library">Vai all'archivio</button>`;
+    action = `<p>${t('home.empty')}</p>
+      <button class="btn primary full" data-nav="library">${t('home.goLibrary')}</button>`;
   } else if (!ai.hasProvider(S.settings)) {
-    action = `<p>Per generare e correggere le frasi serve una chiave API gratuita (Gemini o Groq).</p>
-      <button class="btn primary full" data-nav="settings">Configura l'AI</button>`;
+    action = `<p>${t('home.needKey')}</p>
+      <button class="btn primary full" data-nav="settings">${t('home.configureAi')}</button>`;
   } else {
     const focus = focusItems();
-    const names = focus.slice(0, 3).map((i) => i.term).join(', ') + (focus.length > 3 ? ` e altri ${focus.length - 3}` : '');
     action = `
       <div class="focus-summary small">
-        <span>🎯 ${focus.length ? `Argomenti: <b>${esc(names)}</b>` : "Argomenti: li sceglie l'app in base ai ripassi"}</span>
-        <button class="link" data-action="focus-open">${focus.length ? 'Modifica' : 'Scegli argomenti'}</button>
+        <span>🎯 ${focus.length ? t('home.topics', { names: esc(listNames(focus, 'common.andOthers')) }) : t('home.topicsAuto')}</span>
+        <button class="link" data-action="focus-open">${focus.length ? t('home.topicsEdit') : t('home.topicsChoose')}</button>
       </div>
-      <button class="btn primary full big" data-action="start">Inizia sessione · ${S.settings.sessionSize} frasi</button>`;
+      <button class="btn primary full big" data-action="start">${t('home.start', { n: S.settings.sessionSize })}</button>`;
   }
   view.innerHTML = `
     <div class="card hero">
-      <h2>Ciao! 👋</h2>
+      <h2>${t('home.hello')}</h2>
       <ul class="stats four">
-        <li><b>${count('word')}</b> parole</li>
-        <li><b>${count('phrasal')}</b> phrasal verb</li>
-        <li><b>${count('rule')}</b> regole</li>
-        <li><b>${due}</b> da ripassare</li>
+        <li><b>${count('word')}</b> ${t('home.words')}</li>
+        <li><b>${count('phrasal')}</b> ${t('home.phrasal')}</li>
+        <li><b>${count('rule')}</b> ${t('home.rules')}</li>
+        <li><b>${due}</b> ${t('home.due')}</li>
       </ul>
-      <h3>✍️ Traduzione di frasi</h3>
+      <h3>${t('home.translationTitle')}</h3>
       ${action}
     </div>
     ${items.length ? flashHome(count) : ''}
     ${count('rule') ? quizHome() : ''}
-    <p class="muted small center">L'app sceglie cosa ripassare in base ai tuoi errori; l'AI crea le frasi e le corregge.</p>`;
+    <p class="muted small center">${t('home.footer')}</p>`;
 }
 
 // ---------- FLASHCARD ----------
@@ -191,17 +205,17 @@ function flashHome(count) {
   const n = Math.min(20, flashPool().length);
   return `
     <div class="card">
-      <h3>🃏 Flashcard</h3>
-      <p class="muted small">Ripassa i significati, anche senza internet. Scegli le categorie:</p>
+      <h3>${t('flash.title')}</h3>
+      <p class="muted small">${t('flash.intro')}</p>
       <div class="chips">
-        ${Object.entries(KINDS).map(([k, v]) => `
-          <button class="chip ${ui.flashKinds.has(k) ? 'active' : ''}" data-action="flash-kind" data-kind="${k}">${v.many} · ${count(k)}</button>`).join('')}
+        ${Object.keys(KINDS).map((k) => `
+          <button class="chip ${ui.flashKinds.has(k) ? 'active' : ''}" data-action="flash-kind" data-kind="${k}">${kindLabel(k)} · ${count(k)}</button>`).join('')}
       </div>
       <div class="segmented">
-        <button class="${ui.flashDir === 'en-it' ? 'active' : ''}" data-action="flash-dir" data-dir="en-it">Inglese → Italiano</button>
-        <button class="${ui.flashDir === 'it-en' ? 'active' : ''}" data-action="flash-dir" data-dir="it-en">Italiano → Inglese</button>
+        <button class="${ui.flashDir === 'en-it' ? 'active' : ''}" data-action="flash-dir" data-dir="en-it">${t('flash.enToNative')}</button>
+        <button class="${ui.flashDir === 'it-en' ? 'active' : ''}" data-action="flash-dir" data-dir="it-en">${t('flash.nativeToEn')}</button>
       </div>
-      <button class="btn primary full" data-action="flash-start" ${n ? '' : 'disabled'}>${n ? `Inizia · ${n} carte` : 'Nessuna carta nelle categorie scelte'}</button>
+      <button class="btn primary full" data-action="flash-start" ${n ? '' : 'disabled'}>${n ? t('flash.start', { n }) : t('flash.none')}</button>
     </div>`;
 }
 
@@ -216,14 +230,14 @@ function renderFlash() {
     const known = f.cards.length - f.missed.length;
     view.innerHTML = `
       <div class="card hero">
-        <h2>Mazzo completato 🎉</h2>
+        <h2>${t('flash.doneTitle')}</h2>
         <ul class="stats">
-          <li><b class="good-text">${known}</b> ricordate</li>
-          <li><b class="bad-text">${f.missed.length}</b> da rivedere</li>
-          <li><b>${f.cards.length}</b> carte</li>
+          <li><b class="good-text">${known}</b> ${t('flash.known')}</li>
+          <li><b class="bad-text">${f.missed.length}</b> ${t('flash.missed')}</li>
+          <li><b>${f.cards.length}</b> ${t('flash.cards')}</li>
         </ul>
-        ${f.missed.length ? `<button class="btn primary full" data-action="flash-retry">Ripassa le ${f.missed.length} sbagliate</button>` : ''}
-        <button class="btn ${f.missed.length ? 'ghost' : 'primary'} full" data-action="flash-quit">Fine</button>
+        ${f.missed.length ? `<button class="btn primary full" data-action="flash-retry">${t('flash.retry', { n: f.missed.length })}</button>` : ''}
+        <button class="btn ${f.missed.length ? 'ghost' : 'primary'} full" data-action="flash-quit">${t('common.done')}</button>
       </div>`;
     return;
   }
@@ -237,25 +251,25 @@ function renderFlash() {
   const front = reverse ? item.meaning : item.term;
   const back = reverse ? item.term : item.meaning;
   view.innerHTML = `
-    <div class="row between muted small"><span>Carta ${f.index + 1} di ${f.cards.length}</span>
-      <button class="link" data-action="flash-quit">Termina</button></div>
+    <div class="row between muted small"><span>${t('flash.progress', { i: f.index + 1, n: f.cards.length })}</span>
+      <button class="link" data-action="flash-quit">${t('common.end')}</button></div>
     ${bar(Math.round((f.index / f.cards.length) * 100))}
     <div class="card flashcard" data-action="flash-flip">
-      <span class="tag">${KINDS[item.kind].one}</span>
+      <span class="tag">${kindLabel(item.kind, 'one')}</span>
       <p class="sentence">${esc(front)}</p>
       ${f.flipped ? `
         <hr>
         <p class="sentence good-text">${esc(back)}</p>
         ${item.notes ? `<p class="small">${esc(item.notes)}</p>` : ''}
         ${item.example ? `<p class="small muted"><i>${esc(item.example)}</i></p>` : ''}
-        <button class="link" data-action="speak" data-text="${esc(item.example || item.term)}">🔊 Ascolta</button>`
-      : '<p class="muted small">Tocca per vedere la risposta</p>'}
+        <button class="link" data-action="speak" data-text="${esc(item.example || item.term)}">${t('common.listen')}</button>`
+      : `<p class="muted small">${t('flash.tap')}</p>`}
     </div>
     ${f.flipped ? `
       <div class="row gap">
-        <button class="btn bad grow" data-action="flash-grade" data-ok="0">Non ricordavo</button>
-        <button class="btn good grow" data-action="flash-grade" data-ok="1">Ricordavo</button>
-      </div>` : `<button class="btn primary full" data-action="flash-flip">Mostra risposta</button>`}`;
+        <button class="btn bad grow" data-action="flash-grade" data-ok="0">${t('flash.forgot')}</button>
+        <button class="btn good grow" data-action="flash-grade" data-ok="1">${t('flash.remembered')}</button>
+      </div>` : `<button class="btn primary full" data-action="flash-flip">${t('flash.show')}</button>`}`;
 }
 
 async function gradeFlash(ok) {
@@ -271,7 +285,7 @@ async function gradeFlash(ok) {
 
 // ---------- QUIZ DI GRAMMATICA ----------
 // Domande a scelta multipla sulle regole. Le genera l'AI la prima volta e restano
-// salvate nella regola (anche offline); si rinnovano ogni due settimane.
+// salvate nella regola (anche offline); si rinnovano ogni due settimane o se cambia la lingua.
 const QUIZ_SIZE = 10;
 const QUIZ_MAX_AGE = 14 * 24 * 60 * 60 * 1000;
 const quizRules = () => {
@@ -288,16 +302,15 @@ const shuffle = (a) => {
 
 function quizHome() {
   const sel = S.settings.quizRuleIds.map(findItem).filter(Boolean);
-  const names = sel.slice(0, 3).map((i) => i.term).join(', ') + (sel.length > 3 ? ` e altre ${sel.length - 3}` : '');
   return `
     <div class="card">
-      <h3>🧩 Quiz di grammatica</h3>
-      <p class="muted small">Domande a scelta multipla per mettere in pratica le regole. Le regole "… vs …" diventano una scelta tra le due forme.</p>
+      <h3>${t('quiz.title')}</h3>
+      <p class="muted small">${t('quiz.intro')}</p>
       <div class="focus-summary small">
-        <span>📘 Regole: <b>${sel.length ? esc(names) : 'tutte'}</b></span>
-        <button class="link" data-action="quiz-rules">Scegli</button>
+        <span>${t('quiz.rules', { names: sel.length ? esc(listNames(sel, 'common.andOtherRules')) : t('quiz.all') })}</span>
+        <button class="link" data-action="quiz-rules">${t('common.choose')}</button>
       </div>
-      <button class="btn primary full" data-action="quiz-start">Inizia quiz · ${QUIZ_SIZE} domande</button>
+      <button class="btn primary full" data-action="quiz-start">${t('quiz.start', { n: QUIZ_SIZE })}</button>
     </div>`;
 }
 
@@ -305,23 +318,21 @@ async function startQuiz(cards) {
   if (!cards) {
     // Al massimo 10 regole per quiz, le più da ripassare.
     const rules = pickCards(quizRules(), QUIZ_SIZE);
-    const stale = rules.filter((r) => !r.quiz || Date.now() - r.quiz.createdAt > QUIZ_MAX_AGE);
-    if (stale.length) {
-      if (ai.hasProvider(S.settings) && navigator.onLine) {
-        view.innerHTML = loading('Preparo le domande del quiz…');
-        try {
-          const quizzes = await ai.generateQuizzes(S.settings, stale);
-          for (const [id, quiz] of quizzes) Object.assign(findItem(id), { quiz, updatedAt: Date.now() });
-          await saveData();
-        } catch (e) {
-          toast(`Domande non preparate: ${e.message}`, true);
-        }
+    const stale = rules.filter((r) => !r.quiz || Date.now() - r.quiz.createdAt > QUIZ_MAX_AGE || (r.quiz.lang || 'it') !== getLang());
+    if (stale.length && ai.hasProvider(S.settings) && navigator.onLine) {
+      view.innerHTML = loading(t('quiz.loading'));
+      try {
+        const quizzes = await ai.generateQuizzes(S.settings, stale);
+        for (const [id, quiz] of quizzes) Object.assign(findItem(id), { quiz, updatedAt: Date.now() });
+        await saveData();
+      } catch (e) {
+        toast(t('quiz.genFailed', { e: e.message }), true);
       }
     }
     const ready = rules.filter((r) => r.quiz?.questions.length);
     if (!ready.length) {
       render();
-      return toast('Nessuna domanda disponibile: serve internet e una chiave API per prepararle la prima volta.', true);
+      return toast(t('quiz.noQuestions'), true);
     }
     // Domande distribuite a turno tra le regole, senza ripetizioni.
     const pools = new Map(ready.map((r) => [r.id, shuffle([...r.quiz.questions.keys()])]));
@@ -342,14 +353,14 @@ function renderQuiz() {
     const right = z.cards.length - z.wrong.length;
     view.innerHTML = `
       <div class="card hero">
-        <h2>Quiz completato 🎉</h2>
+        <h2>${t('quiz.doneTitle')}</h2>
         <ul class="stats">
-          <li><b class="good-text">${right}</b> giuste</li>
-          <li><b class="bad-text">${z.wrong.length}</b> sbagliate</li>
-          <li><b>${z.cards.length}</b> domande</li>
+          <li><b class="good-text">${right}</b> ${t('quiz.right')}</li>
+          <li><b class="bad-text">${z.wrong.length}</b> ${t('quiz.wrong')}</li>
+          <li><b>${z.cards.length}</b> ${t('quiz.questions')}</li>
         </ul>
-        ${z.wrong.length ? `<button class="btn primary full" data-action="quiz-retry">Rifai le ${z.wrong.length} sbagliate</button>` : ''}
-        <button class="btn ${z.wrong.length ? 'ghost' : 'primary'} full" data-action="quiz-quit">Fine</button>
+        ${z.wrong.length ? `<button class="btn primary full" data-action="quiz-retry">${t('quiz.retry', { n: z.wrong.length })}</button>` : ''}
+        <button class="btn ${z.wrong.length ? 'ghost' : 'primary'} full" data-action="quiz-quit">${t('common.done')}</button>
       </div>`;
     return;
   }
@@ -364,18 +375,18 @@ function renderQuiz() {
   const answered = z.chosen !== null;
   const ok = answered && z.chosen === q.a;
   view.innerHTML = `
-    <div class="row between muted small"><span>Domanda ${z.index + 1} di ${z.cards.length}</span>
-      <button class="link" data-action="quiz-quit">Termina</button></div>
+    <div class="row between muted small"><span>${t('quiz.progress', { i: z.index + 1, n: z.cards.length })}</span>
+      <button class="link" data-action="quiz-quit">${t('common.end')}</button></div>
     ${bar(Math.round((z.index / z.cards.length) * 100))}
     <div class="card flashcard">
       <span class="tag">${esc(item.term)}</span>
       <p class="sentence">${esc(q.s)}</p>
       ${answered ? `
         <hr>
-        <p class="${ok ? 'good-text' : 'bad-text'}"><b>${ok ? 'Giusto ✓' : `Sbagliato: la risposta era «${esc(q.a)}»`}</b></p>
+        <p class="${ok ? 'good-text' : 'bad-text'}"><b>${ok ? t('quiz.correct') : t('quiz.incorrect', { a: esc(q.a) })}</b></p>
         <p>${esc(q.full)} <button class="link" data-action="speak" data-text="${esc(q.full)}">🔊</button></p>
         ${q.why ? `<p class="small muted">${esc(q.why)}</p>` : ''}`
-      : '<p class="muted small">Quale va usato?</p>'}
+      : `<p class="muted small">${t('quiz.which')}</p>`}
     </div>
     <div class="list">
       ${card.order.map((o) => {
@@ -383,7 +394,7 @@ function renderQuiz() {
         return `<button class="btn ${cls} full" data-action="quiz-pick" data-opt="${esc(o)}" ${answered ? 'disabled' : ''}>${esc(o)}</button>`;
       }).join('')}
     </div>
-    ${answered ? '<button class="btn primary full" data-action="quiz-next">Avanti</button>' : ''}`;
+    ${answered ? `<button class="btn primary full" data-action="quiz-next">${t('common.next')}</button>` : ''}`;
 }
 
 async function pickQuizAnswer(option) {
@@ -403,31 +414,31 @@ function renderSessionEnd() {
   const count = (v) => r.filter((x) => x === v).length;
   view.innerHTML = `
     <div class="card hero">
-      <h2>Sessione completata 🎉</h2>
+      <h2>${t('session.doneTitle')}</h2>
       <ul class="stats">
-        <li><b class="good-text">${count('correct')}</b> corrette</li>
-        <li><b class="warn-text">${count('minor')}</b> quasi</li>
-        <li><b class="bad-text">${count('wrong')}</b> da rivedere</li>
+        <li><b class="good-text">${count('correct')}</b> ${t('session.doneCorrect')}</li>
+        <li><b class="warn-text">${count('minor')}</b> ${t('session.doneMinor')}</li>
+        <li><b class="bad-text">${count('wrong')}</b> ${t('session.doneWrong')}</li>
       </ul>
-      <button class="btn primary full" data-action="new-session">Nuova sessione</button>
-      <button class="btn ghost full" data-action="end-session">Torna alla home</button>
+      <button class="btn primary full" data-action="new-session">${t('session.new')}</button>
+      <button class="btn ghost full" data-action="end-session">${t('session.home')}</button>
     </div>`;
 }
 
 const focusItems = () => S.settings.focusIds.map(findItem).filter(Boolean);
 
 // Finestra di scelta degli argomenti, usata per gli esercizi (focusIds) e per il quiz (quizRuleIds).
-function focusForm({ key = 'focusIds', kinds = ['rule', 'phrasal', 'word'], title = '🎯 Scegli argomenti', hint = "Le frasi della sessione useranno solo gli elementi selezionati. Senza selezione l'app sceglie da sola, in base ai ripassi." } = {}) {
+function focusForm({ key = 'focusIds', kinds = ['rule', 'phrasal', 'word'], title = t('focus.title'), hint = t('focus.hint') } = {}) {
   ui.focusKey = key;
   const sel = new Set(S.settings[key]);
-  const short = (t) => (t.length > 70 ? t.slice(0, 70) + '…' : t);
+  const short = (s) => (s.length > 70 ? s.slice(0, 70) + '…' : s);
   const group = (kind) => {
     const list = S.data.items.filter((i) => i.kind === kind).sort((a, b) => a.term.localeCompare(b.term));
     if (!list.length) return '';
     return `
       <details ${kind === 'word' ? '' : 'open'}>
-        <summary><b>${KINDS[kind].many}</b> (${list.length})</summary>
-        <div class="row gap"><button class="link" data-action="focus-all" data-kind="${kind}">Seleziona tutti</button><button class="link" data-action="focus-none" data-kind="${kind}">Nessuno</button></div>
+        <summary><b>${kindLabel(kind)}</b> (${list.length})</summary>
+        <div class="row gap"><button class="link" data-action="focus-all" data-kind="${kind}">${t('focus.all')}</button><button class="link" data-action="focus-none" data-kind="${kind}">${t('focus.none')}</button></div>
         ${list.map((i) => `
           <label class="check">
             <input type="checkbox" data-id="${i.id}" data-kind="${kind}" ${sel.has(i.id) ? 'checked' : ''}>
@@ -438,11 +449,11 @@ function focusForm({ key = 'focusIds', kinds = ['rule', 'phrasal', 'word'], titl
   openModal(`
     <h3>${title}</h3>
     <p class="muted small">${hint}</p>
-    <input id="focus-search" type="search" placeholder="Cerca…">
+    <input id="focus-search" type="search" placeholder="${t('common.search')}">
     <div class="list preview focus-list">${kinds.map(group).join('')}</div>
     <div class="row gap">
-      <button class="btn ghost grow" data-action="focus-clear">Nessun filtro</button>
-      <button class="btn primary grow" data-action="focus-save">Usa selezionati</button>
+      <button class="btn ghost grow" data-action="focus-clear">${t('focus.clear')}</button>
+      <button class="btn primary grow" data-action="focus-save">${t('focus.save')}</button>
     </div>`);
   $('#focus-search').addEventListener('input', (e) => {
     const q = e.target.value.toLowerCase();
@@ -481,7 +492,7 @@ async function startSession() {
 async function checkAnswer() {
   const sess = S.session;
   const answer = $('#answer').value.trim();
-  if (!answer) return toast('Scrivi prima una traduzione');
+  if (!answer) return toast(t('session.writeFirst'));
   const ex = sess.exercises[sess.index];
   sess.answer = answer;
   sess.phase = 'checking';
@@ -547,16 +558,16 @@ function renderLibrary() {
 
   view.innerHTML = `
     <div class="segmented">
-      ${Object.entries(KINDS).map(([k, v]) => `<button class="${ui.libTab === k ? 'active' : ''}" data-action="lib-tab" data-tab="${k}">${v.many}</button>`).join('')}
+      ${Object.keys(KINDS).map((k) => `<button class="${ui.libTab === k ? 'active' : ''}" data-action="lib-tab" data-tab="${k}">${kindLabel(k)}</button>`).join('')}
     </div>
     <div class="row gap wrap">
-      <button class="btn primary grow" data-action="add-item">+ Aggiungi</button>
-      <button class="btn ghost grow" data-action="import-file">📄 Carica file</button>
-      <button class="btn ghost grow" data-action="paste-list">📋 Incolla lista</button>
-      ${S.data.items.length ? '<button class="btn ghost grow" data-action="reclassify">🪄 Sistema archivio</button>' : ''}
+      <button class="btn primary grow" data-action="add-item">${t('lib.add')}</button>
+      <button class="btn ghost grow" data-action="import-file">${t('lib.import')}</button>
+      <button class="btn ghost grow" data-action="paste-list">${t('lib.paste')}</button>
+      ${S.data.items.length ? `<button class="btn ghost grow" data-action="reclassify">${t('lib.fix')}</button>` : ''}
     </div>
-    <input id="lib-search" type="search" placeholder="Cerca…" value="${esc(ui.libQuery)}">
-    ${list.length ? '' : `<p class="muted center">Nessun elemento${q ? ' trovato' : ''}.</p>`}
+    <input id="lib-search" type="search" placeholder="${t('common.search')}" value="${esc(ui.libQuery)}">
+    ${list.length ? '' : `<p class="muted center">${q ? t('lib.notFound') : t('lib.empty')}</p>`}
     <div class="list">
       ${list.map((i) => `
         <button class="item" data-action="edit-item" data-id="${i.id}">
@@ -578,19 +589,19 @@ function renderLibrary() {
 function itemForm(item) {
   const i = item || { kind: ui.libTab, term: '', meaning: '', notes: '', example: '', topic: '' };
   openModal(`
-    <h3>${item ? 'Modifica' : 'Nuovo elemento'}</h3>
+    <h3>${item ? t('item.edit') : t('item.new')}</h3>
     <form id="item-form">
-      <label>Tipo<select name="kind">${Object.entries(KINDS).map(([k, v]) => `<option value="${k}" ${i.kind === k ? 'selected' : ''}>${v.many}</option>`).join('')}</select></label>
-      <label>Termine (in inglese)<input name="term" required value="${esc(i.term)}" placeholder="es. awkward / give up / Third conditional"></label>
-      <label>Significato / spiegazione<textarea name="meaning" rows="2">${esc(i.meaning)}</textarea></label>
-      <label>Note / struttura<textarea name="notes" rows="2">${esc(i.notes)}</textarea></label>
-      <label>Esempio<input name="example" value="${esc(i.example)}"></label>
-      <label>Argomento<input name="topic" value="${esc(i.topic)}"></label>
-      ${item ? `<p class="muted small">Visto ${i.srs.correct + i.srs.wrong} volte · ✓ ${i.srs.correct} · ✗ ${i.srs.wrong}</p>` : ''}
+      <label>${t('item.kind')}<select name="kind">${Object.keys(KINDS).map((k) => `<option value="${k}" ${i.kind === k ? 'selected' : ''}>${kindLabel(k)}</option>`).join('')}</select></label>
+      <label>${t('item.term')}<input name="term" required value="${esc(i.term)}" placeholder="${t('item.termPlaceholder')}"></label>
+      <label>${t('item.meaning')}<textarea name="meaning" rows="2">${esc(i.meaning)}</textarea></label>
+      <label>${t('item.notes')}<textarea name="notes" rows="2">${esc(i.notes)}</textarea></label>
+      <label>${t('item.example')}<input name="example" value="${esc(i.example)}"></label>
+      <label>${t('item.topic')}<input name="topic" value="${esc(i.topic)}"></label>
+      ${item ? `<p class="muted small">${t('item.stats', { n: i.srs.correct + i.srs.wrong, ok: i.srs.correct, ko: i.srs.wrong })}</p>` : ''}
       <div class="row gap">
-        ${item ? `<button type="button" class="btn bad" data-action="delete-item" data-id="${i.id}">Elimina</button>` : ''}
-        <button type="button" class="btn ghost grow" data-action="close-modal">Annulla</button>
-        <button type="submit" class="btn primary grow">Salva</button>
+        ${item ? `<button type="button" class="btn bad" data-action="delete-item" data-id="${i.id}">${t('common.delete')}</button>` : ''}
+        <button type="button" class="btn ghost grow" data-action="close-modal">${t('common.cancel')}</button>
+        <button type="submit" class="btn primary grow">${t('common.save')}</button>
       </div>
     </form>`);
   $('#item-form').addEventListener('submit', async (e) => {
@@ -610,23 +621,22 @@ function itemForm(item) {
 
 function pasteListForm() {
   openModal(`
-    <h3>Incolla una lista</h3>
-    <p class="muted small">Una voce per riga, ad esempio:<br><code>awkward = imbarazzante</code><br><code>phrasal: give up = arrendersi</code><br><code>regola: Present perfect = azioni passate con effetti sul presente</code><br>
-    Oppure incolla un testo qualsiasi (appunti, esercizi) e lascia che l'AI estragga parole e regole.</p>
+    <h3>${t('paste.title')}</h3>
+    <p class="muted small">${t('paste.help')}</p>
     <textarea id="paste-text" rows="8"></textarea>
     <div class="row gap wrap">
-      <button class="btn ghost grow" data-action="close-modal">Annulla</button>
-      <button class="btn ghost grow" data-action="paste-parse">Aggiungi lista</button>
-      <button class="btn primary grow" data-action="paste-ai">Analizza con AI</button>
+      <button class="btn ghost grow" data-action="close-modal">${t('common.cancel')}</button>
+      <button class="btn ghost grow" data-action="paste-parse">${t('paste.add')}</button>
+      <button class="btn primary grow" data-action="paste-ai">${t('paste.ai')}</button>
     </div>`);
 }
 
 async function analyzeText(text, useAI) {
-  if (!text.trim()) return toast('Nessun testo da analizzare');
+  if (!text.trim()) return toast(t('paste.noText'));
   let items;
   if (useAI) {
-    if (!ai.hasProvider(S.settings)) return toast("Configura prima una chiave API nelle Impostazioni", true);
-    openModal(loading("L'AI sta estraendo parole e regole…"));
+    if (!ai.hasProvider(S.settings)) return toast(t('common.configureKeyFirst'), true);
+    openModal(loading(t('paste.extracting')));
     try {
       items = await ai.extractItems(S.settings, text);
     } catch (e) {
@@ -638,7 +648,7 @@ async function analyzeText(text, useAI) {
   }
   if (!items.length) {
     closeModal();
-    return toast(useAI ? 'Non ho trovato elementi nel testo' : 'Nessuna riga nel formato "parola = significato"', true);
+    return toast(useAI ? t('paste.nothingAi') : t('paste.nothingList'), true);
   }
   showPreview(items);
 }
@@ -646,19 +656,19 @@ async function analyzeText(text, useAI) {
 function showPreview(items) {
   ui.preview = items.map((i) => ({ ...i, dup: isDuplicate(i.kind, i.term) }));
   openModal(`
-    <h3>Trovati ${items.length} elementi</h3>
-    <p class="muted small">Deseleziona quelli che non vuoi salvare. I duplicati sono già deselezionati.</p>
+    <h3>${t('preview.found', { n: items.length })}</h3>
+    <p class="muted small">${t('preview.help')}</p>
     <div class="list preview">
       ${ui.preview.map((i, n) => `
         <label class="check">
           <input type="checkbox" data-n="${n}" ${i.dup ? '' : 'checked'}>
-          <span><b>${esc(i.term)}</b> <span class="tag">${KINDS[i.kind].one}</span>${i.dup ? ' <span class="tag">già presente</span>' : ''}<br>
+          <span><b>${esc(i.term)}</b> <span class="tag">${kindLabel(i.kind, 'one')}</span>${i.dup ? ` <span class="tag">${t('preview.dup')}</span>` : ''}<br>
           <span class="muted small">${esc(i.meaning)}</span></span>
         </label>`).join('')}
     </div>
     <div class="row gap">
-      <button class="btn ghost grow" data-action="close-modal">Annulla</button>
-      <button class="btn primary grow" data-action="save-preview">Salva selezionati</button>
+      <button class="btn ghost grow" data-action="close-modal">${t('common.cancel')}</button>
+      <button class="btn primary grow" data-action="save-preview">${t('preview.save')}</button>
     </div>`);
 }
 
@@ -673,28 +683,28 @@ async function reclassify() {
   }
   let aiError = '';
   if (ai.hasProvider(S.settings)) {
-    openModal(loading("L'AI sta controllando le categorie…"));
+    openModal(loading(t('fix.checking')));
     try {
       const kinds = await ai.classifyItems(S.settings, S.data.items, (n, tot) => {
-        if (tot > 1) openModal(loading(`L'AI sta controllando le categorie… (blocco ${n} di ${tot})`));
+        if (tot > 1) openModal(loading(t('fix.checkingChunk', { n, tot })));
       });
       for (const c of kinds) changes.set(c.id, { ...(changes.get(c.id) || { id: c.id }), kind: c.kind });
     } catch (e) {
       aiError = e.message;
     }
   } else {
-    aiError = 'nessuna chiave API';
+    aiError = t('common.noKey');
   }
   const list = [...changes.values()];
   if (!list.length) {
     closeModal();
-    return aiError ? toast(`Controllo categorie non riuscito: ${aiError}`, true) : toast("L'archivio è già in ordine ✓");
+    return aiError ? toast(t('fix.failed', { e: aiError }), true) : toast(t('fix.ok'));
   }
   ui.preview = list;
   openModal(`
-    <h3>${list.length} elementi da sistemare</h3>
-    ${aiError ? `<p class="small bad-text">Categorie non controllate (${esc(aiError)}). Puoi comunque separare gli esempi.</p>` : ''}
-    <p class="muted small">Deseleziona quelli che vuoi lasciare come sono.</p>
+    <h3>${t('fix.title', { n: list.length })}</h3>
+    ${aiError ? `<p class="small bad-text">${t('fix.noCategories', { e: esc(aiError) })}</p>` : ''}
+    <p class="muted small">${t('fix.help')}</p>
     <div class="list preview">
       ${list.map((c, n) => {
         const item = findItem(c.id);
@@ -702,14 +712,14 @@ async function reclassify() {
         <label class="check">
           <input type="checkbox" data-n="${n}" checked>
           <span><b>${esc(item.term)}</b><br>
-          ${c.kind ? `<span class="muted small">${KINDS[item.kind].many} → <b>${KINDS[c.kind].many}</b></span><br>` : ''}
-          ${c.example ? `<span class="muted small">Significato: <b>${esc(c.meaning)}</b><br>Esempio: <i>${esc(c.example)}</i></span>` : ''}</span>
+          ${c.kind ? `<span class="muted small">${kindLabel(item.kind)} → <b>${kindLabel(c.kind)}</b></span><br>` : ''}
+          ${c.example ? `<span class="muted small">${t('fix.meaning')}: <b>${esc(c.meaning)}</b><br>${t('fix.example')}: <i>${esc(c.example)}</i></span>` : ''}</span>
         </label>`;
       }).join('')}
     </div>
     <div class="row gap">
-      <button class="btn ghost grow" data-action="close-modal">Annulla</button>
-      <button class="btn primary grow" data-action="save-reclassify">Applica selezionati</button>
+      <button class="btn ghost grow" data-action="close-modal">${t('common.cancel')}</button>
+      <button class="btn primary grow" data-action="save-reclassify">${t('fix.apply')}</button>
     </div>`);
 }
 
@@ -722,7 +732,7 @@ async function saveReclassify() {
   }
   await saveData();
   closeModal();
-  toast(`${checked.length} elementi sistemati`);
+  toast(t('fix.done', { n: checked.length }));
   render();
 }
 
@@ -731,12 +741,12 @@ async function savePreview() {
   checked.forEach(addItem);
   await saveData();
   closeModal();
-  toast(`${checked.length} elementi aggiunti`);
+  toast(t('preview.added', { n: checked.length }));
   render();
 }
 
 async function importFile(file) {
-  openModal(loading(`Leggo ${file.name}…`));
+  openModal(loading(t('import.reading', { name: file.name })));
   try {
     const text = await readFileText(file);
     // Se il file è già una lista "parola = significato" non serve l'AI.
@@ -777,32 +787,32 @@ function renderProgress() {
   view.innerHTML = `
     <div class="card">
       <ul class="stats">
-        <li><b>${streakDays()}</b> giorni di fila</li>
-        <li><b>${recent.length ? Math.round((ok / recent.length) * 100) : 0}%</b> risposte giuste (30 gg)</li>
-        <li><b>${attempts.length}</b> frasi tradotte</li>
+        <li><b>${streakDays()}</b> ${t('prog.streak')}</li>
+        <li><b>${recent.length ? Math.round((ok / recent.length) * 100) : 0}%</b> ${t('prog.accuracy')}</li>
+        <li><b>${attempts.length}</b> ${t('prog.translated')}</li>
       </ul>
     </div>
-    <h3>Regole grammaticali</h3>
+    <h3>${t('prog.rules')}</h3>
     ${rules.length ? rules.map((r) => `
       <div class="progress-row">
         <div class="row between"><span>${esc(r.term)}</span><b>${mastery(r)}%</b></div>
         ${bar(mastery(r))}
         <div class="muted small">✓ ${r.srs.correct} · ✗ ${r.srs.wrong}</div>
-      </div>`).join('') : '<p class="muted">Nessuna regola nell\'archivio.</p>'}
-    <h3>Parole e phrasal verb su cui insistere</h3>
+      </div>`).join('') : `<p class="muted">${t('prog.noRules')}</p>`}
+    <h3>${t('prog.weak')}</h3>
     ${weakWords.length ? weakWords.map((w) => `
       <div class="progress-row">
         <div class="row between"><span>${esc(w.term)} <span class="muted small">· ${esc(w.meaning)}</span></span><b>${mastery(w)}%</b></div>
         ${bar(mastery(w))}
-      </div>`).join('') : '<p class="muted">Ancora nessun dato: fai qualche sessione.</p>'}
-    <h3>Ultimi errori</h3>
+      </div>`).join('') : `<p class="muted">${t('prog.noData')}</p>`}
+    <h3>${t('prog.lastErrors')}</h3>
     ${lastErrors.length ? lastErrors.map((a) => `
       <div class="card tight">
         <p class="small">${esc(a.it)}</p>
         <p class="small bad-text">✗ ${esc(a.answer)}</p>
         <p class="small good-text">✓ ${esc(a.corrected)}</p>
-      </div>`).join('') : '<p class="muted">Nessun errore registrato.</p>'}
-    <p class="muted small center">La padronanza indica a che punto del ripasso è ogni elemento: sale con le risposte giuste, scende con gli errori.</p>`;
+      </div>`).join('') : `<p class="muted">${t('prog.noErrors')}</p>`}
+    <p class="muted small center">${t('prog.footer')}</p>`;
 }
 
 // ---------- IMPOSTAZIONI ----------
@@ -811,39 +821,39 @@ function renderSettings() {
   view.innerHTML = `
     <form id="settings-form">
       <div class="card">
-        <h3>Intelligenza artificiale</h3>
-        <p class="muted small">Basta una delle due chiavi; se le inserisci entrambe, Groq viene usato quando Gemini esaurisce la quota gratuita. Le chiavi restano solo su questo dispositivo.</p>
-        <label>Chiave Gemini <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">(ottienila gratis)</a>
+        <h3>${t('set.ai')}</h3>
+        <p class="muted small">${t('set.aiHelp')}</p>
+        <label>${t('set.geminiKey')} <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">${t('set.getFree')}</a>
           <input name="geminiKey" type="password" autocomplete="off" value="${esc(s.geminiKey)}"></label>
-        <label>Modello Gemini<input name="geminiModel" list="gemini-models" value="${esc(s.geminiModel)}"></label>
+        <label>${t('set.geminiModel')}<input name="geminiModel" list="gemini-models" value="${esc(s.geminiModel)}"></label>
         <datalist id="gemini-models"><option value="gemini-flash-latest"></datalist>
-        <label>Chiave Groq <a href="https://console.groq.com/keys" target="_blank" rel="noopener">(ottienila gratis)</a>
+        <label>${t('set.groqKey')} <a href="https://console.groq.com/keys" target="_blank" rel="noopener">${t('set.getFree')}</a>
           <input name="groqKey" type="password" autocomplete="off" value="${esc(s.groqKey)}"></label>
-        <label>Modello Groq<input name="groqModel" list="groq-models" value="${esc(s.groqModel)}"></label>
+        <label>${t('set.groqModel')}<input name="groqModel" list="groq-models" value="${esc(s.groqModel)}"></label>
         <datalist id="groq-models"><option value="openai/gpt-oss-120b"></datalist>
-        <button type="button" class="btn ghost full" data-action="test-ai">Prova connessione</button>
+        <button type="button" class="btn ghost full" data-action="test-ai">${t('set.test')}</button>
       </div>
       <div class="card">
-        <h3>Studio</h3>
-        <label>Livello<select name="level">${['A2', 'B1', 'B2', 'C1'].map((l) => `<option ${s.level === l ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
-        <label>Frasi per sessione<input name="sessionSize" type="number" min="3" max="25" value="${s.sessionSize}"></label>
+        <h3>${t('set.study')}</h3>
+        <label>${t('set.level')}<select name="level">${['A2', 'B1', 'B2', 'C1'].map((l) => `<option ${s.level === l ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+        <label>${t('set.sessionSize')}<input name="sessionSize" type="number" min="3" max="25" value="${s.sessionSize}"></label>
       </div>
       <div class="card">
-        <h3>Sincronizzazione PC ↔ telefono</h3>
-        <p class="muted small">Inserisci lo stesso token GitHub (permesso "gist") su tutti i dispositivi: l'archivio viene salvato in un Gist privato e unito automaticamente.
-          <a href="https://github.com/settings/tokens/new?scopes=gist&description=English%20Tutor" target="_blank" rel="noopener">Crea token</a></p>
-        <label>Token GitHub<input name="gistToken" type="password" autocomplete="off" value="${esc(s.gistToken)}"></label>
-        <p class="small">Stato: <b>${esc(syncLabel())}</b></p>
-        <button type="button" class="btn ghost full" data-action="sync-now">Sincronizza ora</button>
+        <h3>${t('set.sync')}</h3>
+        <p class="muted small">${t('set.syncHelp')}
+          <a href="https://github.com/settings/tokens/new?scopes=gist&description=English%20Tutor" target="_blank" rel="noopener">${t('set.createToken')}</a></p>
+        <label>${t('set.token')}<input name="gistToken" type="password" autocomplete="off" value="${esc(s.gistToken)}"></label>
+        <p class="small">${t('set.status')}: <b>${esc(syncLabel())}</b></p>
+        <button type="button" class="btn ghost full" data-action="sync-now">${t('set.syncNow')}</button>
       </div>
     </form>
     <div class="card">
-      <h3>Backup</h3>
+      <h3>${t('set.backup')}</h3>
       <div class="row gap wrap">
-        <button class="btn ghost grow" data-action="export">Esporta backup</button>
-        <button class="btn ghost grow" data-action="import-backup">Importa backup</button>
+        <button class="btn ghost grow" data-action="export">${t('set.export')}</button>
+        <button class="btn ghost grow" data-action="import-backup">${t('set.importBackup')}</button>
       </div>
-      <button class="btn bad full" data-action="wipe">Cancella tutti i dati di studio</button>
+      <button class="btn bad full" data-action="wipe">${t('set.wipe')}</button>
     </div>`;
   $('#settings-form').addEventListener('change', async (e) => {
     const f = Object.fromEntries(new FormData(e.currentTarget));
@@ -859,15 +869,15 @@ function renderSettings() {
     });
     if (tokenChanged) S.settings.gistId = '';
     await saveSettings();
-    toast('Impostazioni salvate');
+    toast(t('set.saved'));
     if (tokenChanged && S.settings.gistToken) syncNow();
   });
 }
 
 function syncLabel() {
-  if (!S.settings.gistToken) return 'non configurata';
-  const when = S.settings.lastSync ? new Date(S.settings.lastSync).toLocaleString('it-IT') : 'mai';
-  return { syncing: 'sincronizzazione in corso…', error: `errore: ${ui.syncMsg}` }[ui.syncState] || `ultima sincronizzazione ${when}`;
+  if (!S.settings.gistToken) return t('sync.off');
+  const when = S.settings.lastSync ? new Date(S.settings.lastSync).toLocaleString(langInfo().locale) : t('sync.never');
+  return { syncing: t('sync.syncing'), error: t('sync.error', { e: ui.syncMsg }) }[ui.syncState] || t('sync.last', { when });
 }
 
 function setSyncState(state, msg = '') {
@@ -925,9 +935,9 @@ function exportBackup() {
 async function importBackup(file) {
   try {
     const data = JSON.parse(await file.text());
-    if (!Array.isArray(data.items)) throw new Error('File di backup non valido');
+    if (!Array.isArray(data.items)) throw new Error(t('backup.invalid'));
     await replaceData(merge(S.data, data));
-    toast('Backup importato');
+    toast(t('backup.imported'));
     render();
   } catch (e) {
     toast(e.message, true);
@@ -944,7 +954,7 @@ const actions = {
   speak: (el) => speak(el.dataset.text),
   skip: async () => {
     const ex = S.session.exercises[S.session.index];
-    const fb = { verdict: 'wrong', corrected: ex.en, natural: ex.en, explanation: ex.alternatives.length ? `Altre traduzioni corrette: ${ex.alternatives.join(' / ')}` : '', errors: [] };
+    const fb = { verdict: 'wrong', corrected: ex.en, natural: ex.en, explanation: ex.alternatives.length ? t('session.otherTranslations', { list: ex.alternatives.join(' / ') }) : '', errors: [] };
     S.session.answer = '';
     S.session.feedback = { ...fb, source: 'skip' };
     await applyResult(ex, '', fb);
@@ -959,7 +969,7 @@ const actions = {
     await nextExercise();
   },
   'quit-session': async () => {
-    if (!confirm('Terminare la sessione? Le risposte già date restano salvate.')) return;
+    if (!confirm(t('session.quitConfirm'))) return;
     S.session = null;
     await saveSession();
     render();
@@ -998,7 +1008,7 @@ const actions = {
   'add-item': () => itemForm(null),
   'edit-item': (el) => itemForm(findItem(el.dataset.id)),
   'delete-item': async (el) => {
-    if (!confirm('Eliminare questo elemento?')) return;
+    if (!confirm(t('item.deleteConfirm'))) return;
     deleteItem(el.dataset.id);
     await saveData();
     closeModal();
@@ -1012,12 +1022,7 @@ const actions = {
   reclassify,
   'save-reclassify': saveReclassify,
   'focus-open': () => focusForm(),
-  'quiz-rules': () => focusForm({
-    key: 'quizRuleIds',
-    kinds: ['rule'],
-    title: '📘 Regole per il quiz',
-    hint: 'Il quiz userà solo le regole selezionate. Senza selezione: tutte.',
-  }),
+  'quiz-rules': () => focusForm({ key: 'quizRuleIds', kinds: ['rule'], title: t('quiz.formTitle'), hint: t('quiz.formHint') }),
   'quiz-start': () => startQuiz(),
   'quiz-retry': () => startQuiz(ui.quiz.wrong),
   'quiz-pick': (el) => pickQuizAnswer(el.dataset.opt),
@@ -1037,17 +1042,17 @@ const actions = {
   'skip-wait': async () => {
     const sess = S.session;
     sess.checkToken = null;
-    sess.feedback = { source: 'self', error: 'hai scelto di non aspettare' };
+    sess.feedback = { source: 'self', error: t('session.skipWaitReason') };
     sess.phase = 'feedback';
     await saveSession();
     render();
   },
   'close-modal': closeModal,
   'test-ai': async () => {
-    toast('Provo la connessione…');
+    toast(t('set.testing'));
     try {
       const out = await ai.askJSON(S.settings, 'Rispondi solo con JSON.', 'Restituisci {"ok": true}', 0);
-      toast(out.ok ? 'Connessione AI funzionante ✓' : 'Risposta inattesa dall\'AI', !out.ok);
+      toast(out.ok ? t('set.testOk') : t('set.testBad'), !out.ok);
     } catch (e) {
       toast(e.message, true);
     }
@@ -1056,7 +1061,7 @@ const actions = {
   export: exportBackup,
   'import-backup': () => $('#backup-input').click(),
   wipe: async () => {
-    if (!confirm('Cancellare parole, regole e cronologia? (Le impostazioni restano.)')) return;
+    if (!confirm(t('set.wipeConfirm'))) return;
     const deleted = { ...S.data.deleted };
     for (const i of S.data.items) deleted[i.id] = Date.now();
     await replaceData({ items: [], attempts: [], deleted });
@@ -1078,6 +1083,13 @@ document.addEventListener('click', (e) => {
 
 $('#modal').addEventListener('click', (e) => {
   if (e.target.id === 'modal' && !ui.preview) closeModal();
+});
+
+$('#lang-select').addEventListener('change', async (e) => {
+  S.settings.lang = e.target.value;
+  await saveSettings();
+  applyLang();
+  render();
 });
 
 document.addEventListener('keydown', (e) => {
@@ -1108,10 +1120,11 @@ window.addEventListener('online', syncNow);
   await load();
   if (S.session?.phase === 'loading') S.session = null;
   if (S.session?.phase === 'checking') S.session.phase = 'answer';
+  applyLang();
   setOnDataChange(scheduleSync);
   ai.setOnModelChange(async (provider, model) => {
     await saveSettings();
-    toast(`${provider}: il modello precedente non è più disponibile, ora uso ${model}`);
+    toast(t('model.changed', { provider, model }));
     if (ui.current === 'settings') renderSettings();
   });
   setSyncState(S.settings.gistToken ? 'ok' : 'off');

@@ -16,16 +16,19 @@
 <body>
   <header class="topbar">
     <h1>English Tutor</h1>
-    <span id="sync-dot" class="sync-dot" title="Sincronizzazione non configurata"></span>
+    <div class="row gap">
+      <select id="lang-select" class="lang-select" aria-label="Lingua / Sprache"></select>
+      <span id="sync-dot" class="sync-dot"></span>
+    </div>
   </header>
 
   <main id="view" class="view"></main>
 
   <nav class="tabbar">
-    <button data-view="practice" class="active"><span class="ico">✍️</span>Pratica</button>
-    <button data-view="library"><span class="ico">📚</span>Archivio</button>
-    <button data-view="progress"><span class="ico">📈</span>Progressi</button>
-    <button data-view="settings"><span class="ico">⚙️</span>Impostazioni</button>
+    <button data-view="practice" class="active"><span class="ico">✍️</span><span data-i18n="nav.practice">Pratica</span></button>
+    <button data-view="library"><span class="ico">📚</span><span data-i18n="nav.library">Archivio</span></button>
+    <button data-view="progress"><span class="ico">📈</span><span data-i18n="nav.progress">Progressi</span></button>
+    <button data-view="settings"><span class="ico">⚙️</span><span data-i18n="nav.settings">Impostazioni</span></button>
   </nav>
 
   <div id="modal" class="modal hidden" role="dialog" aria-modal="true"><div class="modal-card" id="modal-card"></div></div>

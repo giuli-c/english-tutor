@@ -7,6 +7,7 @@ App installabile su telefono e PC (PWA) che:
 - genera con l'AI **frasi in italiano da tradurre in inglese**, costruite solo sul materiale che hai caricato;
 - **corregge** la traduzione, distingue errori veri da alternative valide e spiega cosa cambiare;
 - registra ogni errore e decide **cosa ripassare e quando** (spaced repetition gestito dal codice, non dall'AI);
+- è disponibile in **italiano e tedesco** (menu in alto): interfaccia, frasi da tradurre e spiegazioni dell'AI cambiano lingua;
 - permette di rispondere **a voce** 🎤 e di **ascoltare** la frase corretta 🔊.
 
 Costo: **zero**. Funziona anche quando il PC è spento.
@@ -65,6 +66,7 @@ Qualsiasi altro testo (appunti, PDF di grammatica, esercizi) viene analizzato da
 - `js/store.js` – stato, salvataggio e merge per la sincronizzazione
 - `js/sync.js` – sincronizzazione tramite Gist
 - `js/importer.js` – lettura di PDF/DOCX/TXT e parsing delle liste
+- `js/i18n.js` – testi dell'interfaccia in italiano e tedesco
 - `sw.js` – service worker (installazione e funzionamento offline)
 
 ## Provarla in locale

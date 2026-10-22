@@ -1,3 +1,5 @@
+import { t } from './i18n.js';
+
 // Lettura dei file caricati (TXT, MD, CSV, PDF, DOCX) e parsing delle liste "parola = significato".
 // Le librerie per PDF e Word vengono scaricate solo quando servono.
 
@@ -7,7 +9,7 @@ function loadScript(src) {
     const el = document.createElement('script');
     el.src = src;
     el.onload = resolve;
-    el.onerror = () => reject(new Error('Impossibile scaricare la libreria per leggere il file (serve internet).'));
+    el.onerror = () => reject(new Error(t('file.libFailed')));
     document.head.appendChild(el);
   });
 }
@@ -38,7 +40,7 @@ export async function readFileText(file) {
   const name = file.name.toLowerCase();
   if (name.endsWith('.pdf')) return readPdf(file);
   if (name.endsWith('.docx')) return readDocx(file);
-  if (name.endsWith('.doc')) throw new Error('Il vecchio formato .doc non è supportato: salvalo come .docx o PDF.');
+  if (name.endsWith('.doc')) throw new Error(t('file.doc'));
   return file.text();
 }
 
@@ -69,7 +71,7 @@ export function parseQuickList(text) {
     let line = raw.trim();
     if (!line || line.startsWith('#')) continue;
     let kind = 'word';
-    const prefix = line.match(/^(regola|rule|grammatica|phrasal verb|phrasal)\s*:\s*/i);
+    const prefix = line.match(/^(regola|rule|grammatica|regel|grammatik|phrasal verb|phrasal)\s*:\s*/i);
     if (prefix) {
       kind = prefix[1].toLowerCase().startsWith('phrasal') ? 'phrasal' : 'rule';
       line = line.slice(prefix[0].length);

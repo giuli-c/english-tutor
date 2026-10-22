@@ -1,3 +1,5 @@
+import { t } from './i18n.js';
+
 // Sincronizzazione gratuita tra dispositivi tramite un Gist privato di GitHub.
 // Serve un token GitHub con il solo permesso "gist". Nessun server da gestire.
 const API = 'https://api.github.com';
@@ -12,7 +14,7 @@ async function gh(token, path, options = {}) {
       'Content-Type': 'application/json',
     },
   });
-  if (!res.ok) throw new Error(`GitHub ${res.status}${res.status === 401 ? ' (token non valido)' : ''}`);
+  if (!res.ok) throw new Error(`GitHub ${res.status}${res.status === 401 ? t('gh.badToken') : ''}`);
   return res.json();
 }
 

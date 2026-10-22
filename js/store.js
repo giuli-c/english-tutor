@@ -17,16 +17,14 @@ export const DEFAULT_SETTINGS = {
   gistToken: '',
   gistId: '',
   lastSync: 0,
+  lang: 'it', // lingua dell'interfaccia e delle frasi da tradurre
   focusIds: [], // argomenti scelti per gli esercizi (vuoto = sceglie l'app)
   quizRuleIds: [], // regole scelte per il quiz di grammatica (vuoto = tutte)
 };
 
-// Categorie dell'archivio. Phrasal verb e parole vengono usati allo stesso modo negli esercizi.
-export const KINDS = {
-  word: { one: 'parola', many: 'Parole' },
-  phrasal: { one: 'phrasal verb', many: 'Phrasal verb' },
-  rule: { one: 'regola', many: 'Regole' },
-};
+// Categorie dell'archivio (le etichette sono in i18n.js). Phrasal verb e parole
+// vengono usati allo stesso modo negli esercizi.
+export const KINDS = { word: true, phrasal: true, rule: true };
 
 const emptyData = () => ({ version: 1, updatedAt: 0, items: [], attempts: [], deleted: {} });
 
