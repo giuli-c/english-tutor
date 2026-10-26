@@ -1,7 +1,7 @@
 // Service worker: rende l'app installabile e utilizzabile offline.
 // Strategia network-first per i file dell'app: online prende sempre l'ultima versione,
 // offline usa la copia in cache. Le chiamate alle API (Gemini, Groq, GitHub) non passano dalla cache.
-const CACHE = 'english-tutor-v13';
+const CACHE = 'english-tutor-v14';
 const ASSETS = [
   './',
   'index.html',

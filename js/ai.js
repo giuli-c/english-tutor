@@ -153,7 +153,26 @@ const compactItems = (items) =>
   items.map((i) => ({ id: i.id, kind: i.kind, term: i.term, meaning: i.meaning, notes: i.notes || undefined }));
 
 // plan: per ogni frase, la lista degli elementi che deve allenare (deciso da srs.planSession).
+// Le frasi che svelano la soluzione (termine inglese o asterischi nella frase da tradurre)
+// vengono scartate e richieste di nuovo una volta.
 export async function generateExercises(s, plan) {
+  const byN = await requestExercises(s, plan);
+  const missing = plan.map((_, k) => k).filter((k) => !byN.has(k));
+  if (missing.length && byN.size) {
+    try {
+      const retry = await requestExercises(s, missing.map((k) => plan[k]));
+      retry.forEach((ex, j) => byN.set(missing[j], ex));
+    } catch {
+      // Se il secondo tentativo fallisce si usano le frasi valide già ottenute.
+    }
+  }
+  const exercises = [...byN.keys()].sort((a, b) => a - b).map((k) => byN.get(k));
+  if (!exercises.length) throw new Error(t('ai.noExercises'));
+  return exercises;
+}
+
+// Restituisce una Map indice-del-piano -> esercizio, solo per le frasi valide.
+async function requestExercises(s, plan) {
   const items = [...new Map(plan.flat().map((i) => [i.id, i])).values()];
   const n = plan.length;
   const user = `Livello dello studente: ${s.level} (CEFR).
@@ -165,30 +184,40 @@ Ogni frase "n" deve richiedere TUTTI gli elementi indicati in "use" (id del mate
 ${JSON.stringify(plan.map((p, k) => ({ n: k + 1, use: p.map((i) => i.id) })))}
 
 Regole:
+- "it" è la frase da tradurre, scritta INTERAMENTE in ${native(s)}: nessuna parola inglese, niente asterischi o virgolette per evidenziare.
+- Esprimi il significato degli elementi in ${native(s)}: lo studente deve trovare da solo il termine inglese. Esempio: per "look up" scrivi "cercare" (non "look up").
 - Rispetta il piano: non usare come obiettivo elementi diversi da quelli indicati per ogni frase.
 - Frasi naturali di vita quotidiana, lavoro, viaggi, relazioni. Varia contesti e soggetti.
-- "it" è la frase in ${native(s)} da tradurre. Non rivelare quale regola usare.
+- Non rivelare quale regola usare.
 - Non introdurre strutture grammaticali molto più difficili del livello indicato.
-- "en" è la traduzione di riferimento più naturale; "alternatives" altre traduzioni corrette (0-2).
+- "en" è la traduzione di riferimento più naturale e usa gli elementi del piano; "alternatives" altre traduzioni corrette (0-2).
 - "n" è il numero della frase nel piano.
-- "hint" è un piccolo aiuto in ${native(s)} che non dà la soluzione.
+- "hint" è un piccolo aiuto in ${native(s)} che non dà la soluzione e non contiene il termine inglese.
 
 Formato:
 {"exercises":[{"n":1,"it":"...","en":"...","alternatives":["..."],"hint":"..."}]}`;
   const out = await askJSON(s, tutor(s), user, 0.9);
-  const exercises = (out.exercises || [])
-    .filter((e) => e && typeof e.it === 'string' && typeof e.en === 'string')
-    .map((e, k) => ({
+  const byN = new Map();
+  (out.exercises || []).forEach((e, k) => {
+    if (!e || typeof e.it !== 'string' || typeof e.en !== 'string') return;
+    const idx = (Number.isInteger(e.n) ? e.n : k + 1) - 1;
+    const planned = plan[idx];
+    if (!planned || byN.has(idx) || revealsAnswer(e.it, planned)) return;
+    byN.set(idx, {
       it: e.it.trim(),
       en: e.en.trim(),
       alternatives: Array.isArray(e.alternatives) ? e.alternatives.filter((a) => typeof a === 'string') : [],
       // Gli elementi allenati sono quelli del piano, non quelli dichiarati dall'AI.
-      itemIds: (plan[(Number.isInteger(e.n) ? e.n : k + 1) - 1] || plan[k] || []).map((i) => i.id),
-      hint: typeof e.hint === 'string' ? e.hint : '',
-    }));
-  if (!exercises.length) throw new Error(t('ai.noExercises'));
-  return exercises;
+      itemIds: planned.map((i) => i.id),
+      hint: typeof e.hint === 'string' && !revealsAnswer(e.hint, planned) ? e.hint : '',
+    });
+  });
+  return byN;
 }
+
+// La frase da tradurre non deve contenere asterischi né il termine inglese di parole e phrasal verb.
+const revealsAnswer = (text, planned) =>
+  text.includes('*') || planned.some((i) => i.kind !== 'rule' && i.term.length > 2 && text.toLowerCase().includes(i.term.toLowerCase()));
 
 export async function correctAnswer(s, ex, answer, items) {
   const user = `Frase in ${native(s)}: "${ex.it}"
